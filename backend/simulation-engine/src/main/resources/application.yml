@@ -1,0 +1,54 @@
+spring:
+  application:
+    name: city-simulator
+  datasource:
+    url: ${SPRING_DATASOURCE_URL:jdbc:postgresql://localhost:5432/citysim}
+    username: ${SPRING_DATASOURCE_USERNAME:citysim}
+    password: ${SPRING_DATASOURCE_PASSWORD:citysim}
+    hikari:
+      maximum-pool-size: 10
+      minimum-idle: 2
+  jpa:
+    hibernate:
+      ddl-auto: update
+    show-sql: false
+    properties:
+      hibernate:
+        dialect: org.hibernate.dialect.PostgreSQLDialect
+        jdbc:
+          batch_size: 500
+        order_inserts: true
+  jackson:
+    default-property-inclusion: non_null
+
+server:
+  port: 8080
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,metrics
+  endpoint:
+    health:
+      show-details: always
+
+hazelcast:
+  addresses: ${HAZELCAST_ADDRESSES:localhost:5701}
+
+simulation:
+  max-cars: ${SIMULATION_MAX_CARS:1000}
+  tick-rate-ms: ${SIMULATION_TICK_RATE_MS:50}
+  min-safe-distance: ${SIMULATION_MIN_SAFE_DISTANCE:0.15}
+  persist-every-n-ticks: ${SIMULATION_PERSIST_EVERY_N_TICKS:100}
+  map:
+    grid-width: ${SIMULATION_MAP_GRID_WIDTH:200}
+    grid-height: ${SIMULATION_MAP_GRID_HEIGHT:200}
+    zone-cols: ${SIMULATION_MAP_ZONE_COLS:10}
+    zone-rows: ${SIMULATION_MAP_ZONE_ROWS:10}
+
+logging:
+  level:
+    edu.escuelaing.citysim: INFO
+    com.hazelcast: WARN
+    org.springframework.web.socket: WARN

@@ -1,0 +1,8 @@
+frontend/
+nginx/
+**/target/
+*.jar
+.idea/
+*.iml
+node_modules/
+dist/

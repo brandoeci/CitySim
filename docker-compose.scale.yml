@@ -1,0 +1,23 @@
+# docker compose -f docker-compose.yml -f docker-compose.scale.yml up --build
+# Máxima capacidad: 6 backends + 4 nodos Hazelcast = 10,000+ autos
+
+services:
+  hz-node:
+    environment:
+      JAVA_OPTS: >-
+        -Xms1g -Xmx2g
+        -Dhazelcast.config=/opt/hazelcast/config/hazelcast.xml
+    deploy:
+      replicas: 4
+
+  backend:
+    environment:
+      SIMULATION_MAX_CARS: "10000"
+      SIMULATION_TICK_RATE_MS: "50"
+      JAVA_OPTS: "-Xms1g -Xmx3g"
+    deploy:
+      replicas: 6
+
+  postgres:
+    environment:
+      POSTGRES_MAX_CONNECTIONS: "200"

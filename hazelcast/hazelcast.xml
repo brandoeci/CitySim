@@ -1,0 +1,75 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<hazelcast xmlns="https://www.hazelcast.com/schema/config"
+           xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+           xsi:schemaLocation="https://www.hazelcast.com/schema/config
+           https://www.hazelcast.com/schema/config/hazelcast-config-5.3.xsd">
+
+    <cluster-name>city-cluster</cluster-name>
+
+    <network>
+        <port auto-increment="true" port-count="100">5701</port>
+        <join>
+            <multicast enabled="false"/>
+            <tcp-ip enabled="true">
+                <member>hz-node</member>
+            </tcp-ip>
+        </join>
+        <rest-api enabled="true">
+            <endpoint-group name="HEALTH_CHECK" enabled="true"/>
+            <endpoint-group name="CLUSTER_READ" enabled="true"/>
+        </rest-api>
+    </network>
+
+    <map name="cars">
+        <in-memory-format>OBJECT</in-memory-format>
+        <backup-count>1</backup-count>
+        <async-backup-count>0</async-backup-count>
+        <indexes>
+            <index type="HASH">
+                <attributes>
+                    <attribute>currentZoneId</attribute>
+                </attributes>
+            </index>
+            <index type="HASH">
+                <attributes>
+                    <attribute>status</attribute>
+                </attributes>
+            </index>
+        </indexes>
+    </map>
+
+    <map name="traffic-lights">
+        <in-memory-format>OBJECT</in-memory-format>
+        <backup-count>1</backup-count>
+    </map>
+
+    <map name="zone-ownership">
+        <in-memory-format>OBJECT</in-memory-format>
+        <backup-count>1</backup-count>
+    </map>
+
+    <map name="simulation-state">
+        <in-memory-format>OBJECT</in-memory-format>
+        <backup-count>1</backup-count>
+    </map>
+
+    <topic name="sim-frames">
+        <global-ordering-enabled>false</global-ordering-enabled>
+        <statistics-enabled>true</statistics-enabled>
+    </topic>
+
+    <topic name="sim-commands">
+        <global-ordering-enabled>true</global-ordering-enabled>
+    </topic>
+
+    <executor-service name="default">
+        <pool-size>16</pool-size>
+        <queue-capacity>0</queue-capacity>
+    </executor-service>
+
+    <properties>
+        <property name="hazelcast.logging.type">slf4j</property>
+        <property name="hazelcast.health.monitoring.level">NOISY</property>
+        <property name="hazelcast.health.monitoring.delay.seconds">30</property>
+    </properties>
+</hazelcast>

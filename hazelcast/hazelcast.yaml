@@ -1,0 +1,49 @@
+hazelcast:
+  cluster-name: city-cluster
+
+  network:
+    port:
+      auto-increment: true
+      port-count: 100
+      port: 5701
+    join:
+      multicast:
+        enabled: false
+      tcp-ip:
+        enabled: true
+        member-list:
+          - hz-node
+    rest-api:
+      enabled: true
+      endpoint-groups:
+        HEALTH_CHECK:
+          enabled: true
+        CLUSTER_READ:
+          enabled: true
+
+  # BINARY format: server stores raw bytes, no need for user classes on server classpath
+  map:
+    cars:
+      in-memory-format: BINARY
+      backup-count: 1
+      async-backup-count: 0
+    traffic-lights:
+      in-memory-format: BINARY
+      backup-count: 1
+    zone-ownership:
+      in-memory-format: BINARY
+      backup-count: 1
+    simulation-state:
+      in-memory-format: BINARY
+      backup-count: 1
+
+  topic:
+    sim-frames:
+      global-ordering-enabled: false
+      statistics-enabled: true
+    sim-commands:
+      global-ordering-enabled: true
+
+  properties:
+    hazelcast.logging.type: slf4j
+    hazelcast.health.monitoring.delay.seconds: 30
