@@ -73,10 +73,23 @@ public class EventService {
         });
     }
 
-    public void registerAction(Long eventId, String zoneId) {
+    /**
+     * Registra una accion de respuesta. Valida que la accion corresponda al
+     * tipo de evento activo (HU11). Lanza IllegalArgumentException si no coincide.
+     */
+    public void registerAction(Long eventId, String zoneId, EventAction action) {
         EventState current = space.getActiveEvent();
-        if (current == null || !current.eventId().equals(eventId)) return;
-        if (!"ACTIVE".equals(current.status())) return;
+        if (current == null || !current.eventId().equals(eventId))
+            throw new IllegalArgumentException("No hay un evento activo con id " + eventId);
+        if (!"ACTIVE".equals(current.status()))
+            throw new IllegalArgumentException("El evento ya no esta activo");
+
+        EventType type = EventType.valueOf(current.type());
+        EventAction required = type.getRequiredAction();
+        if (action != required)
+            throw new IllegalArgumentException(
+                    "La accion " + action + " no resuelve un evento " + type +
+                    ". Se requiere " + required);
 
         EventState updated = current.withAction(zoneId);
 

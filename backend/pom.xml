@@ -1,27 +1,24 @@
-<?xml version="1.0" encoding="UTF-8"?>
+﻿<?xml version="1.0" encoding="UTF-8"?>
 <project xmlns="http://maven.apache.org/POM/4.0.0"
          xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
          xsi:schemaLocation="http://maven.apache.org/POM/4.0.0
          https://maven.apache.org/xsd/maven-4.0.0.xsd">
     <modelVersion>4.0.0</modelVersion>
-
     <groupId>edu.escuelaing.citysim</groupId>
     <artifactId>city-simulator-parent</artifactId>
     <version>1.0.0</version>
     <packaging>pom</packaging>
     <name>CitySim</name>
     <description>
-        Simulador de tráfico urbano distribuido en tiempo real sobre arquitectura
-        Space-Based (SBA) con grilla tipo Manhattan, enrutamiento A* y transmisión
-        por WebSocket. Proyecto académico — ARSW, Escuela Colombiana de Ingeniería.
+        Simulador de trafico urbano distribuido en tiempo real sobre arquitectura
+        Space-Based (SBA) con grilla tipo Manhattan, enrutamiento A* y transmision
+        por WebSocket. Proyecto academico - ARSW, Escuela Colombiana de Ingenieria.
     </description>
     <url>https://github.com/brandoeci/CitySim</url>
-
     <organization>
-        <name>Escuela Colombiana de Ingeniería Julio Garavito</name>
+        <name>Escuela Colombiana de Ingenieria Julio Garavito</name>
         <url>https://www.escuelaing.edu.co</url>
     </organization>
-
     <modules>
         <module>simulation-core</module>
         <module>simulation-engine</module>
@@ -36,8 +33,9 @@
         <hazelcast.version>5.3.8</hazelcast.version>
         <lombok.version>1.18.36</lombok.version>
         <jackson.version>2.17.3</jackson.version>
+        <jacoco.version>0.8.12</jacoco.version>
+        <argLine></argLine>
     </properties>
-
     <dependencyManagement>
         <dependencies>
             <dependency>
@@ -69,7 +67,6 @@
             </dependency>
         </dependencies>
     </dependencyManagement>
-
     <build>
         <pluginManagement>
             <plugins>
@@ -88,5 +85,28 @@
                 </plugin>
             </plugins>
         </pluginManagement>
+        <plugins>
+            <plugin>
+                <groupId>org.jacoco</groupId>
+                <artifactId>jacoco-maven-plugin</artifactId>
+                <version>${jacoco.version}</version>
+                <executions>
+                    <execution>
+                        <id>prepare-agent</id>
+                        <goals>
+                            <goal>prepare-agent</goal>
+                        </goals>
+                    </execution>
+                    <execution>
+                        <id>report</id>
+                        <phase>verify</phase>
+                        <goals>
+                            <goal>report</goal>
+                        </goals>
+                    </execution>
+                </executions>
+            </plugin>
+        </plugins>
     </build>
 </project>
+

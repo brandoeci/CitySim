@@ -33,14 +33,31 @@ public class EventController {
 
     @PostMapping("/{eventId}/respond")
     public ResponseEntity<?> respond(@PathVariable Long eventId,
-                                     @RequestHeader("Authorization") String authHeader) {
+                                     @RequestHeader("Authorization") String authHeader,
+                                     @RequestBody Map<String, String> body) {
         String token = authHeader.replace("Bearer ", "").trim();
         String username = jwtService.extractUsername(token);
         String zone = zoneAssignment.getZone(username);
         if (zone == null)
             return ResponseEntity.badRequest().body(Map.of("error", "Sin zona asignada"));
-        eventService.registerAction(eventId, zone);
-        return ResponseEntity.ok(Map.of("registered", true, "zone", zone));
+
+        String actionStr = body.get("action");
+        if (actionStr == null)
+            return ResponseEntity.badRequest().body(Map.of("error", "Falta el campo 'action'"));
+
+        EventAction action;
+        try {
+            action = EventAction.valueOf(actionStr.trim().toUpperCase());
+        } catch (IllegalArgumentException e) {
+            return ResponseEntity.badRequest().body(Map.of("error", "Accion desconocida: " + actionStr));
+        }
+
+        try {
+            eventService.registerAction(eventId, zone, action);
+            return ResponseEntity.ok(Map.of("registered", true, "zone", zone, "action", action.name()));
+        } catch (IllegalArgumentException e) {
+            return ResponseEntity.badRequest().body(Map.of("error", e.getMessage()));
+        }
     }
 
     @GetMapping("/history")
