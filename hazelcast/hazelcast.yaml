@@ -39,6 +39,9 @@ hazelcast:
     zone-assignments:
       in-memory-format: BINARY
       backup-count: 1
+    event-leader:
+      in-memory-format: BINARY
+      backup-count: 1
   topic:
     sim-frames:
       global-ordering-enabled: false

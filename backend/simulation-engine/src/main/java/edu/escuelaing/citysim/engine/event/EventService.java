@@ -16,6 +16,7 @@ public class EventService {
     private final EventBroadcaster broadcaster;
     private final ZoneRegistry zoneRegistry;
     private final SpaceDataGrid space;
+    private final EventGeneratorLeader leader;
 
     private static final Random RANDOM = new Random();
 
@@ -28,15 +29,18 @@ public class EventService {
     );
 
     public EventService(EventRepository eventRepository, EventBroadcaster broadcaster,
-                        ZoneRegistry zoneRegistry, SpaceDataGrid space) {
+                        ZoneRegistry zoneRegistry, SpaceDataGrid space,
+                        EventGeneratorLeader leader) {
         this.eventRepository = eventRepository;
         this.broadcaster = broadcaster;
         this.zoneRegistry = zoneRegistry;
         this.space = space;
+        this.leader = leader;
     }
 
     @Scheduled(fixedDelay = 120000)
     public void generateEvent() {
+        if (!leader.isLeader()) return;
         if (space.getActiveEvent() != null) return;
 
         List<String> zones = new ArrayList<>(zoneRegistry.getOwnedZones().keySet());
