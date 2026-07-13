@@ -8,6 +8,10 @@ import org.springframework.stereotype.Component;
 public class SimulationProperties {
 
     private int maxCars = 1000;
+
+    /** Poblacion objetivo: el mantenedor repone carros hasta alcanzar este numero. */
+    private int targetCars = 300;
+
     private long tickRateMs = 50;
     private double minSafeDistance = 0.15;
     private int persistEveryNTicks = 100;
@@ -15,6 +19,8 @@ public class SimulationProperties {
 
     public int getMaxCars()                 { return maxCars; }
     public void setMaxCars(int v)           { maxCars = v; }
+    public int getTargetCars()              { return targetCars; }
+    public void setTargetCars(int v)        { targetCars = v; }
     public long getTickRateMs()             { return tickRateMs; }
     public void setTickRateMs(long v)       { tickRateMs = v; }
     public double getMinSafeDistance()      { return minSafeDistance; }
@@ -29,7 +35,6 @@ public class SimulationProperties {
         private int gridHeight = 200;
         private int zoneCols   = 10;
         private int zoneRows   = 10;
-
         public int getGridWidth()            { return gridWidth; }
         public void setGridWidth(int v)      { gridWidth = v; }
         public int getGridHeight()           { return gridHeight; }

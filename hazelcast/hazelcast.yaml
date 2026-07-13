@@ -42,6 +42,9 @@ hazelcast:
     event-leader:
       in-memory-format: BINARY
       backup-count: 1
+    active-users:
+      in-memory-format: BINARY
+      backup-count: 1
   topic:
     sim-frames:
       global-ordering-enabled: false

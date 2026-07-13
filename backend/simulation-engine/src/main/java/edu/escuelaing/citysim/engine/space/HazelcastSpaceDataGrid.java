@@ -11,8 +11,11 @@ import edu.escuelaing.citysim.core.sba.SpaceDataGrid;
 import org.springframework.stereotype.Component;
 
 import java.util.Collection;
+import java.util.Comparator;
 import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
+import java.util.concurrent.TimeUnit;
 import java.util.stream.Collectors;
 
 @Component
@@ -20,11 +23,15 @@ public class HazelcastSpaceDataGrid implements SpaceDataGrid {
 
     private static final String ACTIVE_EVENT_KEY = "active";
 
+    /** Si un usuario no renueva su heartbeat en este tiempo, se considera desconectado. */
+    private static final int PRESENCE_TTL_SECONDS = 10;
+
     private final IMap<String, CarState> carMap;
     private final IMap<String, TrafficLightPhase> trafficLightMap;
     private final IMap<String, String> simulationStateMap;
     private final IMap<String, EventState> activeEventMap;
     private final IMap<String, String> zoneAssignmentMap;
+    private final IMap<String, Long> activeUserMap;
     private final ITopic<SimulationFrame> frameTopic;
 
     public HazelcastSpaceDataGrid(HazelcastInstance hazelcast) {
@@ -33,6 +40,7 @@ public class HazelcastSpaceDataGrid implements SpaceDataGrid {
         this.simulationStateMap = hazelcast.getMap("simulation-state");
         this.activeEventMap    = hazelcast.getMap("active-events");
         this.zoneAssignmentMap = hazelcast.getMap("zone-assignments");
+        this.activeUserMap     = hazelcast.getMap("active-users");
         this.frameTopic        = hazelcast.getTopic("sim-frames");
     }
 
@@ -116,6 +124,40 @@ public class HazelcastSpaceDataGrid implements SpaceDataGrid {
         Map<String, String> snapshot = new HashMap<>();
         zoneAssignmentMap.forEach(snapshot::put);
         return snapshot;
+    }
+
+    // Presencia con TTL
+    // El valor guardado es el instante de la PRIMERA conexion (firstSeen),
+    // que se conserva entre renovaciones para poder ordenar por antiguedad.
+    // Mismo patron de TTL que EventGeneratorLeader usa sobre 'event-leader'.
+    @Override
+    public void heartbeat(String username) {
+        Long firstSeen = activeUserMap.get(username);
+        long value = (firstSeen != null) ? firstSeen : System.currentTimeMillis();
+        activeUserMap.set(username, value, PRESENCE_TTL_SECONDS, TimeUnit.SECONDS);
+    }
+
+    @Override
+    public void removePresence(String username) {
+        activeUserMap.delete(username);
+    }
+
+    @Override
+    public boolean isActive(String username) {
+        return activeUserMap.containsKey(username);
+    }
+
+    @Override
+    public int getActiveUserCount() {
+        return activeUserMap.size();
+    }
+
+    @Override
+    public List<String> getActiveUsersOrdered() {
+        return activeUserMap.entrySet().stream()
+                .sorted(Map.Entry.comparingByValue(Comparator.naturalOrder()))
+                .map(Map.Entry::getKey)
+                .collect(Collectors.toList());
     }
 
     // Acceso directo para listeners

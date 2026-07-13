@@ -34,7 +34,6 @@
         <lombok.version>1.18.36</lombok.version>
         <jackson.version>2.17.3</jackson.version>
         <jacoco.version>0.8.12</jacoco.version>
-        <argLine></argLine>
     </properties>
     <dependencyManagement>
         <dependencies>
@@ -90,6 +89,16 @@
                 <groupId>org.jacoco</groupId>
                 <artifactId>jacoco-maven-plugin</artifactId>
                 <version>${jacoco.version}</version>
+                <configuration>
+                    <propertyName>jacocoArgLine</propertyName>
+                    <excludes>
+                        <exclude>**/config/**</exclude>
+                        <exclude>**/web/**</exclude>
+                        <exclude>**/CitySimulatorApplication.*</exclude>
+                        <exclude>**/persistence/**</exclude>
+                        <exclude>**/*Controller.*</exclude>
+                    </excludes>
+                </configuration>
                 <executions>
                     <execution>
                         <id>prepare-agent</id>

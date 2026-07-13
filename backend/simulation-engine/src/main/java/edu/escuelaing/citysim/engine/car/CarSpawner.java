@@ -21,11 +21,14 @@ public class CarSpawner {
 
     private static final Logger log = LoggerFactory.getLogger(CarSpawner.class);
 
+    /** Debe coincidir con LANE_WIDTH de CarAgent. */
+    private static final double LANE_WIDTH = 0.5;
+
     private static final String[] COLORS = {
-        "#FF6B35","#F7C59F","#EFEFD0","#004E89","#1A936F",
-        "#C6DABF","#88D498","#FFD166","#EF476F","#06D6A0",
-        "#118AB2","#073B4C","#E63946","#457B9D","#2DC653",
-        "#F4A261","#E76F51","#264653","#2A9D8F","#E9C46A"
+            "#FF6B35","#F7C59F","#EFEFD0","#004E89","#1A936F",
+            "#C6DABF","#88D498","#FFD166","#EF476F","#06D6A0",
+            "#118AB2","#073B4C","#E63946","#457B9D","#2DC653",
+            "#F4A261","#E76F51","#264653","#2A9D8F","#E9C46A"
     };
 
     private final SpaceDataGrid space;
@@ -71,24 +74,41 @@ public class CarSpawner {
         String firstEdgeId = null;
         String zoneId = origin.zoneId();
         List<String> pathNodes = path.nodeIds();
+
+        // Carriles disponibles en la primera via de la ruta: una avenida ofrece
+        // 4, una calle 2. Antes esto estaba fijo en 2 y las avenidas solo usaban
+        // la mitad de sus carriles.
+        int laneCount = 1;
+        double heading = 0.0;
+
         if (pathNodes.size() >= 2) {
             for (Edge e : cityMap.getOutgoingEdges(pathNodes.get(0))) {
                 if (e.targetNodeId().equals(pathNodes.get(1))) {
                     firstEdgeId = e.id();
                     zoneId = e.zoneId();
+                    laneCount = Math.max(1, e.laneCount());
+                    Node next = cityMap.getNode(pathNodes.get(1));
+                    heading = Math.atan2(next.y() - origin.y(), next.x() - origin.x());
                     break;
                 }
             }
         }
 
+        int lane = random.nextInt(laneCount);
+
+        // Nace ya sobre su carril, no en el eje de la via.
+        double dist = (lane + 0.5) * LANE_WIDTH;
+        double px = -Math.sin(heading) * dist;
+        double py =  Math.cos(heading) * dist;
+
         CarState car = CarState.builder()
                 .carId(carId)
-                .x(origin.x()).y(origin.y())
-                .heading(0.0).speed(1.0)
+                .x(origin.x() + px).y(origin.y() + py)
+                .heading(heading).speed(1.0)
                 .currentZoneId(zoneId)
                 .currentEdgeId(firstEdgeId)
                 .segmentOffset(0.0)
-                .laneIndex(random.nextInt(2))
+                .laneIndex(lane)
                 .pathNodes(pathNodes).pathIndex(0)
                 .status(CarStatus.SPAWNING)
                 .lastUpdatedTick(0)

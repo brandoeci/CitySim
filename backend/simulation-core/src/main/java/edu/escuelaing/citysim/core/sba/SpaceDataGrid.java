@@ -6,6 +6,7 @@ import edu.escuelaing.citysim.core.model.SimulationFrame;
 import edu.escuelaing.citysim.core.model.TrafficLightPhase;
 
 import java.util.Collection;
+import java.util.List;
 import java.util.Map;
 
 public interface SpaceDataGrid {
@@ -38,4 +39,17 @@ public interface SpaceDataGrid {
     void assignZone(String username, String zoneId);
     String getAssignedZone(String username);
     Map<String, String> getAllZoneAssignments();
+
+    // Presencia de usuarios (TTL): un usuario sigue "activo" mientras
+    // renueve su heartbeat. Si deja de hacerlo, su entrada expira sola.
+    void heartbeat(String username);
+    void removePresence(String username);
+    boolean isActive(String username);
+    int getActiveUserCount();
+
+    /**
+     * Usuarios activos ordenados por antiguedad (el primero en conectarse va primero).
+     * El orden es determinista para que el reparto de distritos sea estable.
+     */
+    List<String> getActiveUsersOrdered();
 }
