@@ -4,111 +4,116 @@ import org.junit.jupiter.api.Test;
 
 import java.time.Instant;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.Map;
+import java.util.Set;
 
 import static org.junit.jupiter.api.Assertions.*;
 
 class EventStateTest {
 
-    private EventState baseEvent() {
+    private static EventState base(int requiredActions) {
+        Map<String, String> targets = new HashMap<>();
+        targets.put("Z_0_0", "E_H_0_0");
+        targets.put("Z_0_5", "E_H_0_5");
+
         return new EventState(
-                1L, "ACCIDENT", "ACTIVE", "Z_1_1",
-                "Accidente reportado", 60, 5,
-                Instant.now(), null, new HashMap<>()
+                1L, "ACCIDENT", "ACTIVE", "ALL",
+                "Accidente multiple", 90, requiredActions,
+                Instant.now(), null,
+                new HashMap<>(),
+                targets,
+                new HashSet<>()
         );
     }
 
     @Test
-    void withActionIncrementaLaZonaCorrecta() {
-        EventState event = baseEvent();
-        EventState updated = event.withAction("Z_1_1");
-
-        assertEquals(1, updated.actionsByZone().get("Z_1_1"));
-        assertEquals(1, updated.totalActions());
+    void eventoNuevoNoTieneAcciones() {
+        EventState e = base(3);
+        assertEquals(0, e.totalActions());
+        assertEquals(0, e.progressPercent());
+        assertFalse(e.isResolved());
     }
 
     @Test
-    void withActionNoMutaElOriginal() {
-        EventState event = baseEvent();
-        event.withAction("Z_1_1");
-
-        // El original sigue vacio (inmutabilidad)
-        assertEquals(0, event.totalActions());
+    void withActionRegistraElDistrito() {
+        EventState e = base(3).withAction("Z_0_0");
+        assertEquals(1, e.totalActions());
+        assertTrue(e.hasResponded("Z_0_0"));
+        assertFalse(e.hasResponded("Z_0_5"));
     }
 
     @Test
-    void withActionAcumulaVariasAcciones() {
-        EventState event = baseEvent()
-                .withAction("Z_1_1")
-                .withAction("Z_1_1")
-                .withAction("Z_2_2");
+    void unDistritoNoPuedeAportarDosVeces() {
+        EventState e = base(3)
+                .withAction("Z_0_0")
+                .withAction("Z_0_0")
+                .withAction("Z_0_0");
 
-        assertEquals(2, event.actionsByZone().get("Z_1_1"));
-        assertEquals(1, event.actionsByZone().get("Z_2_2"));
-        assertEquals(3, event.totalActions());
+        // Aunque se llame tres veces, solo cuenta una: la colaboracion exige
+        // administradores distintos, no clicks repetidos.
+        assertEquals(1, e.totalActions());
     }
 
     @Test
-    void withStatusCambiaEstadoSinMutarOriginal() {
-        EventState event = baseEvent();
-        Instant resolvedAt = Instant.now();
-        EventState resolved = event.withStatus("RESOLVED", resolvedAt);
+    void distritosDistintosSumanCadaUno() {
+        EventState e = base(3)
+                .withAction("Z_0_0")
+                .withAction("Z_0_5");
 
-        assertEquals("RESOLVED", resolved.status());
-        assertEquals(resolvedAt, resolved.resolvedAt());
-        assertEquals("ACTIVE", event.status()); // original intacto
+        assertEquals(2, e.totalActions());
     }
 
     @Test
-    void totalActionsSumaTodasLasZonas() {
-        Map<String, Integer> actions = new HashMap<>();
-        actions.put("Z_1_1", 3);
-        actions.put("Z_2_2", 2);
-        EventState event = new EventState(1L, "ACCIDENT", "ACTIVE", "Z_1_1",
-                "desc", 60, 5, Instant.now(), null, actions);
+    void seResuelveCuandoTodosLosDistritosResponden() {
+        EventState e = base(2)
+                .withAction("Z_0_0")
+                .withAction("Z_0_5");
 
-        assertEquals(5, event.totalActions());
+        assertTrue(e.isResolved());
+        assertEquals(100, e.progressPercent());
     }
 
     @Test
-    void progressPercentCalculaPorcentaje() {
-        EventState event = baseEvent()
-                .withAction("Z_1_1")
-                .withAction("Z_1_1"); // 2 de 5 requeridas
+    void noSeResuelveSiFaltaUnDistrito() {
+        EventState e = base(2).withAction("Z_0_0");
 
-        assertEquals(40, event.progressPercent()); // 2/5 = 40%
+        assertFalse(e.isResolved());
+        assertEquals(50, e.progressPercent());
     }
 
     @Test
-    void progressPercentTopaEn100() {
-        EventState event = baseEvent();
-        for (int i = 0; i < 10; i++) event = event.withAction("Z_1_1"); // 10 de 5
-
-        assertEquals(100, event.progressPercent());
+    void progresoSeCalculaSobreLosDistritosRequeridos() {
+        EventState e = base(4).withAction("Z_0_0");
+        assertEquals(25, e.progressPercent());
     }
 
     @Test
-    void progressPercentEsCeroSiNoHayAccionesRequeridas() {
-        EventState event = new EventState(1L, "ACCIDENT", "ACTIVE", "Z_1_1",
-                "desc", 60, 0, Instant.now(), null, new HashMap<>());
+    void withStatusCambiaElEstadoYConservaLasRespuestas() {
+        Instant now = Instant.now();
+        EventState e = base(2).withAction("Z_0_0").withStatus("RESOLVED", now);
 
-        assertEquals(0, event.progressPercent());
+        assertEquals("RESOLVED", e.status());
+        assertEquals(now, e.resolvedAt());
+        assertEquals(1, e.totalActions());
+        assertTrue(e.hasResponded("Z_0_0"));
     }
 
     @Test
-    void isResolvedEsTrueAlAlcanzarAccionesRequeridas() {
-        EventState event = baseEvent();
-        for (int i = 0; i < 5; i++) event = event.withAction("Z_1_1");
-
-        assertTrue(event.isResolved());
+    void targetEdgeForDevuelveLaViaDelDistrito() {
+        EventState e = base(2);
+        assertEquals("E_H_0_0", e.targetEdgeFor("Z_0_0"));
+        assertEquals("E_H_0_5", e.targetEdgeFor("Z_0_5"));
+        assertNull(e.targetEdgeFor("Z_9_9"));
     }
 
     @Test
-    void isResolvedEsFalseSiFaltanAcciones() {
-        EventState event = baseEvent()
-                .withAction("Z_1_1")
-                .withAction("Z_1_1"); // solo 2 de 5
+    void progresoNuncaSuperaCien() {
+        EventState e = base(1)
+                .withAction("Z_0_0")
+                .withAction("Z_0_5");
 
-        assertFalse(event.isResolved());
+        assertEquals(100, e.progressPercent());
+        assertTrue(e.isResolved());
     }
 }

@@ -26,8 +26,8 @@ public class MapRestController {
 
     @GetMapping("/map")
     public ResponseEntity<Map<String, Object>> getMap() {
-        List<double[]> highways = new ArrayList<>();
-        List<double[]> streets  = new ArrayList<>();
+        List<Map<String, Object>> highways = new ArrayList<>();
+        List<Map<String, Object>> streets  = new ArrayList<>();
         Set<String> seen = new HashSet<>();
 
         for (Edge edge : cityMap.getEdges().values()) {
@@ -40,8 +40,18 @@ public class MapRestController {
             Node tgt = cityMap.getNode(edge.targetNodeId());
             if (src == null || tgt == null) continue;
 
-            double[] line = {src.x(), src.y(), tgt.x(), tgt.y()};
-            if (edge.isHighway()) highways.add(line); else streets.add(line);
+            // Cada segmento lleva su id y su zona, para que el frontend pueda
+            // identificar sobre que via se hace click y si esta en tu distrito.
+            Map<String, Object> seg = new LinkedHashMap<>();
+            seg.put("id", edge.id());
+            seg.put("zoneId", edge.zoneId());
+            seg.put("lanes", edge.laneCount());
+            seg.put("x1", src.x());
+            seg.put("y1", src.y());
+            seg.put("x2", tgt.x());
+            seg.put("y2", tgt.y());
+
+            if (edge.isHighway()) highways.add(seg); else streets.add(seg);
         }
 
         List<Map<String, Object>> zones = cityMap.getZones().values().stream()
@@ -63,6 +73,7 @@ public class MapRestController {
         result.put("highways", highways);
         result.put("streets",  streets);
         result.put("zones",    zones);
+        result.put("blockedEdges", space.getBlockedEdgesWithOwner());
         return ResponseEntity.ok(result);
     }
 
@@ -74,14 +85,14 @@ public class MapRestController {
     @GetMapping("/zones")
     public ResponseEntity<List<Map<String, Object>>> getZones() {
         return ResponseEntity.ok(
-            zoneRegistry.getOwnedZones().entrySet().stream()
-                .map(e -> {
-                    Map<String, Object> m = new LinkedHashMap<>();
-                    m.put("zoneId", e.getKey());
-                    m.put("instanceId", zoneRegistry.getInstanceId());
-                    m.put("localCars", e.getValue().getLocalCarCount());
-                    return m;
-                }).collect(Collectors.toList())
+                zoneRegistry.getOwnedZones().entrySet().stream()
+                        .map(e -> {
+                            Map<String, Object> m = new LinkedHashMap<>();
+                            m.put("zoneId", e.getKey());
+                            m.put("instanceId", zoneRegistry.getInstanceId());
+                            m.put("localCars", e.getValue().getLocalCarCount());
+                            return m;
+                        }).collect(Collectors.toList())
         );
     }
 }

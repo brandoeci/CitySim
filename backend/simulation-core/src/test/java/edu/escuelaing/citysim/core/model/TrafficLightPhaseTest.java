@@ -6,126 +6,86 @@ import static org.junit.jupiter.api.Assertions.*;
 
 class TrafficLightPhaseTest {
 
-    @Test
-    void builderConstruyeConValoresPorDefecto() {
-        TrafficLightPhase phase = TrafficLightPhase.builder()
-                .intersectionId("N1")
+    private static TrafficLightPhase phase(TrafficLightState state, boolean verticalTurn, int ticks) {
+        return TrafficLightPhase.builder()
+                .intersectionId("N_10_10")
+                .state(state)
+                .verticalTurn(verticalTurn)
+                .ticksInCurrentState(ticks)
+                .greenDuration(60)
+                .yellowDuration(8)
                 .build();
-
-        assertEquals("N1", phase.getIntersectionId());
-        assertEquals(TrafficLightState.RED, phase.getState());
-        assertEquals(40, phase.getGreenDuration());
-        assertEquals(5, phase.getYellowDuration());
-        assertEquals(40, phase.getRedDuration());
     }
 
     @Test
-    void isGreenSoloEsTrueEnVerde() {
-        TrafficLightPhase green = TrafficLightPhase.builder()
-                .state(TrafficLightState.GREEN).build();
-        assertTrue(green.isGreen());
-        assertFalse(green.isRed());
+    void ejesOpuestos_cuandoHorizontalTieneVerdeVerticalTieneRojo() {
+        TrafficLightPhase p = phase(TrafficLightState.GREEN, false, 0);
+
+        assertEquals(TrafficLightState.GREEN, p.stateFor(true));   // horizontal
+        assertEquals(TrafficLightState.RED,   p.stateFor(false));  // vertical
     }
 
     @Test
-    void isRedEsTrueEnRojoYAmarillo() {
-        TrafficLightPhase red = TrafficLightPhase.builder()
-                .state(TrafficLightState.RED).build();
-        TrafficLightPhase yellow = TrafficLightPhase.builder()
-                .state(TrafficLightState.YELLOW).build();
+    void ejesOpuestos_cuandoEsTurnoVerticalElHorizontalEstaEnRojo() {
+        TrafficLightPhase p = phase(TrafficLightState.GREEN, true, 0);
 
-        assertTrue(red.isRed());
-        assertTrue(yellow.isRed());   // amarillo cuenta como rojo para detener
-        assertFalse(red.isGreen());
+        assertEquals(TrafficLightState.RED,   p.stateFor(true));
+        assertEquals(TrafficLightState.GREEN, p.stateFor(false));
     }
 
     @Test
-    void advanceIncrementaTicksSinCambiarEstadoSiNoLlegaAlLimite() {
-        TrafficLightPhase phase = TrafficLightPhase.builder()
-                .state(TrafficLightState.GREEN)
-                .greenDuration(40)
-                .ticksInCurrentState(10)
-                .build();
+    void amarilloDetieneAlCarro() {
+        TrafficLightPhase p = phase(TrafficLightState.YELLOW, false, 0);
 
-        TrafficLightPhase next = phase.advance();
-
-        assertEquals(TrafficLightState.GREEN, next.getState());
-        assertEquals(11, next.getTicksInCurrentState());
+        assertTrue(p.isRedFor(true), "El amarillo obliga a detenerse");
+        assertTrue(p.isRedFor(false), "El otro eje sigue en rojo");
     }
 
     @Test
-    void advanceTransicionaDeVerdeAAmarillo() {
-        TrafficLightPhase phase = TrafficLightPhase.builder()
-                .state(TrafficLightState.GREEN)
-                .greenDuration(40)
-                .ticksInCurrentState(39)
-                .build();
+    void verdePermitePasar() {
+        TrafficLightPhase p = phase(TrafficLightState.GREEN, false, 0);
 
-        TrafficLightPhase next = phase.advance();
-
-        assertEquals(TrafficLightState.YELLOW, next.getState());
-        assertEquals(0, next.getTicksInCurrentState());
+        assertFalse(p.isRedFor(true));
+        assertTrue(p.isRedFor(false));
     }
 
     @Test
-    void advanceTransicionaDeAmarilloARojo() {
-        TrafficLightPhase phase = TrafficLightPhase.builder()
-                .state(TrafficLightState.YELLOW)
-                .yellowDuration(5)
-                .ticksInCurrentState(4)
-                .build();
+    void verdePasaAAmarilloAlAgotarSuDuracion() {
+        TrafficLightPhase p = phase(TrafficLightState.GREEN, false, 59).advance();
 
-        TrafficLightPhase next = phase.advance();
-
-        assertEquals(TrafficLightState.RED, next.getState());
-        assertEquals(0, next.getTicksInCurrentState());
+        assertEquals(TrafficLightState.YELLOW, p.getState());
+        assertEquals(0, p.getTicksInCurrentState());
     }
 
     @Test
-    void advanceTransicionaDeRojoAVerde() {
-        TrafficLightPhase phase = TrafficLightPhase.builder()
-                .state(TrafficLightState.RED)
-                .redDuration(40)
-                .ticksInCurrentState(39)
-                .build();
+    void verdeNoCambiaAntesDeTiempo() {
+        TrafficLightPhase p = phase(TrafficLightState.GREEN, false, 10).advance();
 
-        TrafficLightPhase next = phase.advance();
-
-        assertEquals(TrafficLightState.GREEN, next.getState());
-        assertEquals(0, next.getTicksInCurrentState());
+        assertEquals(TrafficLightState.GREEN, p.getState());
+        assertEquals(11, p.getTicksInCurrentState());
     }
 
     @Test
-    void advanceCompletaUnCicloCompleto() {
-        // GREEN -> YELLOW -> RED -> GREEN
-        TrafficLightPhase phase = TrafficLightPhase.builder()
-                .state(TrafficLightState.GREEN)
-                .greenDuration(1).yellowDuration(1).redDuration(1)
-                .ticksInCurrentState(0)
-                .build();
+    void alTerminarElAmarilloElPasoCambiaDeEje() {
+        TrafficLightPhase p = phase(TrafficLightState.YELLOW, false, 7).advance();
 
-        TrafficLightPhase afterGreen = phase.advance();
-        assertEquals(TrafficLightState.YELLOW, afterGreen.getState());
-
-        TrafficLightPhase afterYellow = afterGreen.advance();
-        assertEquals(TrafficLightState.RED, afterYellow.getState());
-
-        TrafficLightPhase afterRed = afterYellow.advance();
-        assertEquals(TrafficLightState.GREEN, afterRed.getState());
+        assertEquals(TrafficLightState.GREEN, p.getState());
+        assertTrue(p.isVerticalTurn(), "El turno pasa al eje vertical");
+        assertEquals(0, p.getTicksInCurrentState());
     }
 
     @Test
-    void toBuilderPreservaLosCampos() {
-        TrafficLightPhase original = TrafficLightPhase.builder()
-                .intersectionId("N5")
-                .state(TrafficLightState.GREEN)
-                .greenDuration(30)
-                .build();
+    void cicloCompletoDevuelveElPasoAlEjeOriginal() {
+        TrafficLightPhase p = phase(TrafficLightState.YELLOW, false, 7).advance();  // -> vertical
+        assertTrue(p.isVerticalTurn());
 
-        TrafficLightPhase copy = original.toBuilder().build();
+        p = phase(TrafficLightState.YELLOW, true, 7).advance();                     // -> horizontal
+        assertFalse(p.isVerticalTurn());
+    }
 
-        assertEquals("N5", copy.getIntersectionId());
-        assertEquals(TrafficLightState.GREEN, copy.getState());
-        assertEquals(30, copy.getGreenDuration());
+    @Test
+    void elCicloConservaLaInterseccion() {
+        TrafficLightPhase p = phase(TrafficLightState.GREEN, false, 59).advance();
+        assertEquals("N_10_10", p.getIntersectionId());
     }
 }

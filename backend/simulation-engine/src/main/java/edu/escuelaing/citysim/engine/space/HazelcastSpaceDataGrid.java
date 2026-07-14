@@ -13,8 +13,10 @@ import org.springframework.stereotype.Component;
 import java.util.Collection;
 import java.util.Comparator;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.concurrent.TimeUnit;
 import java.util.stream.Collectors;
 
@@ -22,8 +24,6 @@ import java.util.stream.Collectors;
 public class HazelcastSpaceDataGrid implements SpaceDataGrid {
 
     private static final String ACTIVE_EVENT_KEY = "active";
-
-    /** Si un usuario no renueva su heartbeat en este tiempo, se considera desconectado. */
     private static final int PRESENCE_TTL_SECONDS = 10;
 
     private final IMap<String, CarState> carMap;
@@ -32,6 +32,7 @@ public class HazelcastSpaceDataGrid implements SpaceDataGrid {
     private final IMap<String, EventState> activeEventMap;
     private final IMap<String, String> zoneAssignmentMap;
     private final IMap<String, Long> activeUserMap;
+    private final IMap<String, String> blockedEdgeMap;
     private final ITopic<SimulationFrame> frameTopic;
 
     public HazelcastSpaceDataGrid(HazelcastInstance hazelcast) {
@@ -41,6 +42,7 @@ public class HazelcastSpaceDataGrid implements SpaceDataGrid {
         this.activeEventMap    = hazelcast.getMap("active-events");
         this.zoneAssignmentMap = hazelcast.getMap("zone-assignments");
         this.activeUserMap     = hazelcast.getMap("active-users");
+        this.blockedEdgeMap    = hazelcast.getMap("blocked-edges");
         this.frameTopic        = hazelcast.getTopic("sim-frames");
     }
 
@@ -127,9 +129,6 @@ public class HazelcastSpaceDataGrid implements SpaceDataGrid {
     }
 
     // Presencia con TTL
-    // El valor guardado es el instante de la PRIMERA conexion (firstSeen),
-    // que se conserva entre renovaciones para poder ordenar por antiguedad.
-    // Mismo patron de TTL que EventGeneratorLeader usa sobre 'event-leader'.
     @Override
     public void heartbeat(String username) {
         Long firstSeen = activeUserMap.get(username);
@@ -158,6 +157,34 @@ public class HazelcastSpaceDataGrid implements SpaceDataGrid {
                 .sorted(Map.Entry.comparingByValue(Comparator.naturalOrder()))
                 .map(Map.Entry::getKey)
                 .collect(Collectors.toList());
+    }
+
+    // Vias cerradas: edgeId -> username que la cerro.
+    @Override
+    public void blockEdge(String edgeId, String username) {
+        blockedEdgeMap.set(edgeId, username);
+    }
+
+    @Override
+    public void unblockEdge(String edgeId) {
+        blockedEdgeMap.delete(edgeId);
+    }
+
+    @Override
+    public boolean isEdgeBlocked(String edgeId) {
+        return blockedEdgeMap.containsKey(edgeId);
+    }
+
+    @Override
+    public Set<String> getBlockedEdges() {
+        return new HashSet<>(blockedEdgeMap.keySet());
+    }
+
+    @Override
+    public Map<String, String> getBlockedEdgesWithOwner() {
+        Map<String, String> snapshot = new HashMap<>();
+        blockedEdgeMap.forEach(snapshot::put);
+        return snapshot;
     }
 
     // Acceso directo para listeners

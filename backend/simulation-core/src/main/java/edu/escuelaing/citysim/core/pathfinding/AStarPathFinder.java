@@ -13,6 +13,15 @@ public class AStarPathFinder implements PathFinder {
 
     @Override
     public PathResult findPath(CityMap map, String sourceNodeId, String targetNodeId) {
+        return findPath(map, sourceNodeId, targetNodeId, Set.of());
+    }
+
+    @Override
+    public PathResult findPath(CityMap map, String sourceNodeId, String targetNodeId,
+                               Set<String> blockedEdgeIds) {
+
+        Set<String> blocked = (blockedEdgeIds == null) ? Set.of() : blockedEdgeIds;
+
         if (sourceNodeId.equals(targetNodeId))
             return new PathResult(List.of(sourceNodeId), 0.0);
 
@@ -22,20 +31,28 @@ public class AStarPathFinder implements PathFinder {
 
         Map<String, Double> gScore = new HashMap<>();
         Map<String, String> cameFrom = new HashMap<>();
-        PriorityQueue<ScoredNode> open = new PriorityQueue<>(Comparator.comparingDouble(s -> s.fScore));
+        PriorityQueue<ScoredNode> open =
+                new PriorityQueue<>(Comparator.comparingDouble(s -> s.fScore));
 
         gScore.put(sourceNodeId, 0.0);
         open.add(new ScoredNode(sourceNodeId, heuristic(map.getNode(sourceNodeId), target)));
 
         while (!open.isEmpty()) {
             ScoredNode current = open.poll();
+
             if (current.nodeId.equals(targetNodeId))
                 return reconstructPath(cameFrom, current.nodeId, gScore.get(current.nodeId));
 
             double currentG = gScore.getOrDefault(current.nodeId, Double.MAX_VALUE);
+
             for (Edge edge : map.getOutgoingEdges(current.nodeId)) {
+
+                // Via cerrada por un administrador: el A* la ignora y busca otra ruta.
+                if (blocked.contains(edge.id())) continue;
+
                 String neighborId = edge.targetNodeId();
                 double tentativeG = currentG + edge.length() / edge.speedLimit();
+
                 if (tentativeG < gScore.getOrDefault(neighborId, Double.MAX_VALUE)) {
                     gScore.put(neighborId, tentativeG);
                     cameFrom.put(neighborId, current.nodeId);
@@ -44,6 +61,7 @@ public class AStarPathFinder implements PathFinder {
                 }
             }
         }
+
         return new PathResult(List.of(), Double.MAX_VALUE);
     }
 

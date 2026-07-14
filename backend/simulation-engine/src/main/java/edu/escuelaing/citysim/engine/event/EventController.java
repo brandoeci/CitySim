@@ -2,10 +2,12 @@ package edu.escuelaing.citysim.engine.event;
 
 import edu.escuelaing.citysim.core.model.EventState;
 import edu.escuelaing.citysim.engine.auth.JwtService;
-import edu.escuelaing.citysim.engine.zone.ZoneAssignmentService;
+import edu.escuelaing.citysim.engine.zone.District;
+import edu.escuelaing.citysim.engine.zone.DistrictService;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 
@@ -14,54 +16,62 @@ import java.util.Map;
 public class EventController {
 
     private final EventService eventService;
-    private final ZoneAssignmentService zoneAssignment;
+    private final DistrictService districtService;
     private final JwtService jwtService;
 
-    public EventController(EventService eventService, ZoneAssignmentService zoneAssignment,
+    public EventController(EventService eventService, DistrictService districtService,
                            JwtService jwtService) {
         this.eventService = eventService;
-        this.zoneAssignment = zoneAssignment;
+        this.districtService = districtService;
         this.jwtService = jwtService;
     }
 
+    /**
+     * Evento activo, con el objetivo concreto de QUIEN pregunta: la via que su
+     * distrito debe cerrar, y si ya cumplio.
+     */
     @GetMapping("/active")
-    public ResponseEntity<?> getActive() {
+    public ResponseEntity<?> getActive(@RequestHeader("Authorization") String authHeader) {
         EventState event = eventService.getActiveEvent();
         if (event == null) return ResponseEntity.noContent().build();
-        return ResponseEntity.ok(event);
-    }
 
-    @PostMapping("/{eventId}/respond")
-    public ResponseEntity<?> respond(@PathVariable Long eventId,
-                                     @RequestHeader("Authorization") String authHeader,
-                                     @RequestBody Map<String, String> body) {
-        String token = authHeader.replace("Bearer ", "").trim();
-        String username = jwtService.extractUsername(token);
-        String zone = zoneAssignment.getZone(username);
-        if (zone == null)
-            return ResponseEntity.badRequest().body(Map.of("error", "Sin zona asignada"));
-
-        String actionStr = body.get("action");
-        if (actionStr == null)
-            return ResponseEntity.badRequest().body(Map.of("error", "Falta el campo 'action'"));
-
-        EventAction action;
-        try {
-            action = EventAction.valueOf(actionStr.trim().toUpperCase());
-        } catch (IllegalArgumentException e) {
-            return ResponseEntity.badRequest().body(Map.of("error", "Accion desconocida: " + actionStr));
+        String username = extractUsername(authHeader);
+        String headZone = null;
+        if (username != null) {
+            District d = districtService.getDistrictOf(username);
+            if (d != null && !d.zoneIds().isEmpty()) headZone = d.zoneIds().get(0);
         }
 
-        try {
-            eventService.registerAction(eventId, zone, action);
-            return ResponseEntity.ok(Map.of("registered", true, "zone", zone, "action", action.name()));
-        } catch (IllegalArgumentException e) {
-            return ResponseEntity.badRequest().body(Map.of("error", e.getMessage()));
-        }
+        Map<String, Object> body = new LinkedHashMap<>();
+        body.put("eventId", event.eventId());
+        body.put("type", event.type());
+        body.put("status", event.status());
+        body.put("affectedZoneId", event.affectedZoneId());
+        body.put("description", event.description());
+        body.put("durationSeconds", event.durationSeconds());
+        body.put("requiredActions", event.requiredActions());
+        body.put("totalActions", event.totalActions());
+        body.put("progressPercent", event.progressPercent());
+        body.put("startedAt", event.startedAt() != null ? event.startedAt().toString() : null);
+        body.put("targetEdges", event.targetEdges());
+        body.put("respondedBy", event.respondedBy());
+
+        // Lo que le toca a ESTE administrador
+        body.put("myTargetEdge", headZone != null ? event.targetEdgeFor(headZone) : null);
+        body.put("iResponded", headZone != null && event.hasResponded(headZone));
+
+        return ResponseEntity.ok(body);
     }
 
     @GetMapping("/history")
     public ResponseEntity<List<SimulationEvent>> getHistory() {
         return ResponseEntity.ok(eventService.getHistory());
+    }
+
+    private String extractUsername(String authHeader) {
+        if (authHeader == null || !authHeader.startsWith("Bearer ")) return null;
+        String token = authHeader.substring(7).trim();
+        if (!jwtService.isValid(token)) return null;
+        return jwtService.extractUsername(token);
     }
 }

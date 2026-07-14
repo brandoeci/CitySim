@@ -6,26 +6,37 @@ import edu.escuelaing.citysim.core.map.Node;
 import edu.escuelaing.citysim.core.model.CarState;
 import edu.escuelaing.citysim.core.model.CarStatus;
 import edu.escuelaing.citysim.core.model.TrafficLightPhase;
+import edu.escuelaing.citysim.core.pathfinding.PathFinder;
+import edu.escuelaing.citysim.core.pathfinding.PathResult;
 import org.springframework.stereotype.Component;
 
 import java.util.List;
+import java.util.Set;
 
 @Component
 public class CarAgent {
 
-    /** Separacion entre carriles, en unidades de mundo (BLOCK_SIZE es 10.0). */
     private static final double LANE_WIDTH = 0.5;
+    private static final double STOP_LINE = 0.92;
+
+    private final PathFinder pathFinder;
+
+    public CarAgent(PathFinder pathFinder) {
+        this.pathFinder = pathFinder;
+    }
 
     public CarState advance(CarState car, CityMap map, CollisionAvoider avoider,
-                            TrafficLightPhase trafficLight, long tick) {
+                            TrafficLightPhase trafficLight, long tick,
+                            Set<String> blocked) {
         if (car.getStatus() == CarStatus.ARRIVED) return null;
-        CarState updated = advanceInternal(car, map, avoider, trafficLight, tick);
+        CarState updated = advanceInternal(car, map, avoider, trafficLight, tick, blocked);
         avoider.update(car, updated);
         return updated;
     }
 
     private CarState advanceInternal(CarState car, CityMap map, CollisionAvoider avoider,
-                                     TrafficLightPhase trafficLight, long tick) {
+                                     TrafficLightPhase trafficLight, long tick,
+                                     Set<String> blocked) {
         List<String> path = car.getPathNodes();
         int idx = car.getPathIndex();
         if (path == null || idx >= path.size() - 1)
@@ -38,15 +49,55 @@ public class CarAgent {
         if (edge == null)
             return car.toBuilder().status(CarStatus.ARRIVED).lastUpdatedTick(tick).build();
 
-        if (car.getSegmentOffset() < 0.05 && trafficLight != null && trafficLight.isRed())
-            return car.toBuilder().status(CarStatus.WAITING_LIGHT).lastUpdatedTick(tick).build();
+        if (!blocked.isEmpty() && blocked.contains(edge.id())) {
+            CarState rerouted = reroute(car, map, currentNodeId, blocked, tick);
+            if (rerouted != null) return rerouted;
+            return car.toBuilder().status(CarStatus.WAITING_TRAFFIC).lastUpdatedTick(tick).build();
+        }
 
-        // El carril se limita a los que ofrece esta via: una avenida tiene mas
-        // carriles que una calle, y el carro se ajusta al entrar.
         int lane = clampLane(car.getLaneIndex(), edge.laneCount());
+
+        Node src = map.getNode(currentNodeId);
+        Node tgt = map.getNode(nextNodeId);
+        double heading = Math.atan2(tgt.y() - src.y(), tgt.x() - src.x());
 
         double advance   = edge.speedLimit() / edge.length();
         double newOffset = car.getSegmentOffset() + advance;
+
+        // El semaforo que ve el carro depende del EJE por el que llega: los edges
+        // horizontales se llaman E_H_*, los verticales E_V_*. Cuando el eje
+        // horizontal tiene verde, el vertical tiene rojo, como en un cruce real.
+        boolean horizontal = edge.id().startsWith("E_H_");
+        boolean redAhead = (trafficLight != null && trafficLight.isRedFor(horizontal));
+
+        if (redAhead) {
+            double target = Math.min(newOffset, STOP_LINE);
+
+            if (avoider.isBlocked(edge.id(), lane, target)) {
+                return car.toBuilder()
+                        .laneIndex(lane)
+                        .status(CarStatus.WAITING_LIGHT)
+                        .lastUpdatedTick(tick)
+                        .build();
+            }
+
+            double cx = src.x() + (tgt.x() - src.x()) * target;
+            double cy = src.y() + (tgt.y() - src.y()) * target;
+            double[] pStop = laneOffset(heading, lane);
+
+            CarStatus st = (target >= STOP_LINE - 1e-9)
+                    ? CarStatus.WAITING_LIGHT : CarStatus.MOVING;
+
+            return car.toBuilder()
+                    .x(cx + pStop[0]).y(cy + pStop[1]).heading(heading)
+                    .segmentOffset(target)
+                    .currentEdgeId(edge.id())
+                    .currentZoneId(edge.zoneId())
+                    .laneIndex(lane)
+                    .status(st)
+                    .lastUpdatedTick(tick)
+                    .build();
+        }
 
         if (newOffset < 1.0) {
             if (avoider.isBlocked(edge.id(), lane, newOffset))
@@ -56,17 +107,9 @@ public class CarAgent {
                         .lastUpdatedTick(tick)
                         .build();
 
-            Node src = map.getNode(currentNodeId);
-            Node tgt = map.getNode(nextNodeId);
-
-            double heading = Math.atan2(tgt.y() - src.y(), tgt.x() - src.x());
-
-            // Posicion sobre la linea central del tramo
             double cx = src.x() + (tgt.x() - src.x()) * newOffset;
             double cy = src.y() + (tgt.y() - src.y()) * newOffset;
-
-            // Desplazamiento lateral segun el carril
-            double[] p = laneOffset(heading, lane, edge.laneCount());
+            double[] p = laneOffset(heading, lane);
 
             return car.toBuilder()
                     .x(cx + p[0]).y(cy + p[1]).heading(heading)
@@ -80,7 +123,6 @@ public class CarAgent {
         } else {
             int nextIdx = idx + 1;
             if (nextIdx >= path.size() - 1) {
-                Node tgt = map.getNode(nextNodeId);
                 return car.toBuilder()
                         .x(tgt.x()).y(tgt.y()).heading(car.getHeading())
                         .segmentOffset(0.0).pathIndex(nextIdx)
@@ -90,19 +132,23 @@ public class CarAgent {
 
             String nextNextId = path.get(nextIdx + 1);
             Edge nextEdge = findEdge(map, nextNodeId, nextNextId);
+
+            if (nextEdge != null && blocked.contains(nextEdge.id())) {
+                CarState rerouted = reroute(car, map, nextNodeId, blocked, tick);
+                if (rerouted != null) return rerouted;
+            }
+
             String nextZone = (nextEdge != null) ? nextEdge.zoneId() : car.getCurrentZoneId();
 
-            Node tgt = map.getNode(nextNodeId);
-            Node nn  = map.getNode(nextNextId);
-            double heading = Math.atan2(nn.y() - tgt.y(), nn.x() - tgt.x());
+            Node nn = map.getNode(nextNextId);
+            double newHeading = Math.atan2(nn.y() - tgt.y(), nn.x() - tgt.x());
 
-            // Al girar, el carro se reubica en un carril valido de la nueva via.
             int nextLanes = (nextEdge != null) ? nextEdge.laneCount() : 1;
             int newLane = clampLane(lane, nextLanes);
-            double[] p = laneOffset(heading, newLane, nextLanes);
+            double[] p = laneOffset(newHeading, newLane);
 
             return car.toBuilder()
-                    .x(tgt.x() + p[0]).y(tgt.y() + p[1]).heading(heading)
+                    .x(tgt.x() + p[0]).y(tgt.y() + p[1]).heading(newHeading)
                     .segmentOffset(0.0)
                     .currentEdgeId(nextEdge != null ? nextEdge.id() : car.getCurrentEdgeId())
                     .currentZoneId(nextZone)
@@ -112,17 +158,42 @@ public class CarAgent {
         }
     }
 
-    /**
-     * Desplazamiento perpendicular a la direccion de marcha, segun el carril.
-     *
-     * El vector perpendicular a (cos h, sin h) es (-sin h, cos h). Como el
-     * desplazamiento es SIEMPRE al mismo lado relativo a la marcha, los dos
-     * sentidos de una misma calle quedan automaticamente en lados opuestos,
-     * igual que en una via real.
-     */
-    private double[] laneOffset(double heading, int lane, int laneCount) {
-        if (laneCount <= 0) laneCount = 1;
-        // Los carriles se reparten a un lado del eje: 0.5, 1.5, 2.5 ... anchos.
+    private CarState reroute(CarState car, CityMap map, String fromNodeId,
+                             Set<String> blocked, long tick) {
+        String dest = car.getDestinationNodeId();
+        if (dest == null) return null;
+
+        PathResult alt = pathFinder.findPath(map, fromNodeId, dest, blocked);
+        if (!alt.isFound() || alt.nodeIds().size() < 2) return null;
+
+        Node at = map.getNode(fromNodeId);
+        if (at == null) return null;
+
+        String nextId = alt.nodeIds().get(1);
+        Edge firstEdge = findEdge(map, fromNodeId, nextId);
+        if (firstEdge == null) return null;
+
+        Node next = map.getNode(nextId);
+        double heading = Math.atan2(next.y() - at.y(), next.x() - at.x());
+
+        int lane = clampLane(car.getLaneIndex(), firstEdge.laneCount());
+        double[] p = laneOffset(heading, lane);
+
+        return car.toBuilder()
+                .pathNodes(alt.nodeIds())
+                .pathIndex(0)
+                .segmentOffset(0.0)
+                .x(at.x() + p[0]).y(at.y() + p[1])
+                .heading(heading)
+                .currentEdgeId(firstEdge.id())
+                .currentZoneId(firstEdge.zoneId())
+                .laneIndex(lane)
+                .status(CarStatus.MOVING)
+                .lastUpdatedTick(tick)
+                .build();
+    }
+
+    private double[] laneOffset(double heading, int lane) {
         double dist = (lane + 0.5) * LANE_WIDTH;
         double px = -Math.sin(heading) * dist;
         double py =  Math.cos(heading) * dist;

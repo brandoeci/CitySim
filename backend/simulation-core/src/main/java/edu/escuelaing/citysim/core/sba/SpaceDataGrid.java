@@ -8,6 +8,7 @@ import edu.escuelaing.citysim.core.model.TrafficLightPhase;
 import java.util.Collection;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 
 public interface SpaceDataGrid {
 
@@ -40,16 +41,19 @@ public interface SpaceDataGrid {
     String getAssignedZone(String username);
     Map<String, String> getAllZoneAssignments();
 
-    // Presencia de usuarios (TTL): un usuario sigue "activo" mientras
-    // renueve su heartbeat. Si deja de hacerlo, su entrada expira sola.
+    // Presencia de usuarios (TTL)
     void heartbeat(String username);
     void removePresence(String username);
     boolean isActive(String username);
     int getActiveUserCount();
-
-    /**
-     * Usuarios activos ordenados por antiguedad (el primero en conectarse va primero).
-     * El orden es determinista para que el reparto de distritos sea estable.
-     */
     List<String> getActiveUsersOrdered();
+
+    // Vias cerradas por los administradores.
+    // El A* las evita al calcular rutas, y los carros que iban hacia ellas
+    // se re-rutean. Es la herramienta de desvio.
+    void blockEdge(String edgeId, String username);
+    void unblockEdge(String edgeId);
+    boolean isEdgeBlocked(String edgeId);
+    Set<String> getBlockedEdges();
+    Map<String, String> getBlockedEdgesWithOwner();
 }
