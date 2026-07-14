@@ -1,15 +1,29 @@
-frontend/
-nginx/
+# Build outputs
 **/target/
 *.jar
 *.class
+dist/
+build/
+
+# Dependencias
+node_modules/
+.angular/
+
+# IDE
 .idea/
 *.iml
 *.iws
 *.ipr
-node_modules/
-dist/
-.DS_Store
-*.log
+.vscode/
+
+# Datos y logs
 postgres-data/
+*.log
+
+# Sistema
+.DS_Store
+Thumbs.db
+
+# Temporales del proyecto
 docker-compose.demo.yml
+frontend_dump.txt
