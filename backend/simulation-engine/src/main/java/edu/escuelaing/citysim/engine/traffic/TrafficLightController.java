@@ -8,6 +8,7 @@ import edu.escuelaing.citysim.core.model.TrafficLightState;
 import org.springframework.stereotype.Component;
 
 import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -91,6 +92,56 @@ public class TrafficLightController {
     }
 
     /**
+     * Fuerza el eje indicado a verde durante durationTicks. Devuelve false si
+     * el cruce no existe o no es un cruce mayor (unico tipo con semaforo).
+     */
+    public boolean forceGreen(String intersectionId, boolean horizontal, int durationTicks) {
+        TrafficLightPhase phase = localCache.get(intersectionId);
+        if (phase == null || !majorIntersections.contains(intersectionId)) return false;
+        localCache.put(intersectionId, phase.forceGreen(horizontal, durationTicks));
+        return true;
+    }
+
+    public boolean isMajorIntersection(String nodeId) {
+        return majorIntersections.contains(nodeId);
+    }
+
+    /**
+     * Cruces mayores en la misma avenida que intersectionId: misma fila si
+     * horizontal (la avenida horizontal que pasa por ahi), misma columna si
+     * no. Ordenados por la coordenada que varia, para que OLA VERDE los
+     * dispare en el orden en que un carro los recorreria.
+     */
+    public List<String> intersectionsAlongAvenue(String intersectionId, boolean horizontal) {
+        int[] rc = parseRowCol(intersectionId);
+        if (rc == null) return List.of();
+        int fixed = horizontal ? rc[0] : rc[1];
+
+        List<String> result = new ArrayList<>();
+        for (String nodeId : majorIntersections) {
+            int[] other = parseRowCol(nodeId);
+            if (other != null && (horizontal ? other[0] : other[1]) == fixed) {
+                result.add(nodeId);
+            }
+        }
+        result.sort(Comparator.comparingInt(id -> {
+            int[] p = parseRowCol(id);
+            return horizontal ? p[1] : p[0];
+        }));
+        return result;
+    }
+
+    private int[] parseRowCol(String nodeId) {
+        String[] parts = nodeId.split("_");
+        if (parts.length < 3) return null;
+        try {
+            return new int[] { Integer.parseInt(parts[1]), Integer.parseInt(parts[2]) };
+        } catch (NumberFormatException e) {
+            return null;
+        }
+    }
+
+    /**
      * Semaforos de los cruces mayores, con el color de CADA eje.
      * El frontend dibuja cuatro luces por cruce: dos para el eje horizontal
      * (este y oeste) y dos para el vertical (norte y sur).
@@ -105,7 +156,8 @@ public class TrafficLightController {
             result.add(new LightView(
                     nodeId, node.x(), node.y(),
                     p.stateFor(true).name(),    // eje horizontal
-                    p.stateFor(false).name()    // eje vertical
+                    p.stateFor(false).name(),   // eje vertical
+                    p.isForced()
             ));
         }
         return result;
@@ -113,5 +165,6 @@ public class TrafficLightController {
 
     /** Un cruce y el color de sus dos ejes. */
     public record LightView(String id, double x, double y,
-                            String horizontalState, String verticalState) {}
+                            String horizontalState, String verticalState,
+                            boolean forced) {}
 }

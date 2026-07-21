@@ -10,11 +10,11 @@ export class EventService {
 
   readonly activeEvent = signal<ActiveEvent | null>(null);
 
-  /** La via que este administrador debe cerrar para aportar al evento. */
-  readonly myTargetEdge = computed(() => this.activeEvent()?.myTargetEdge ?? null);
+  /** El objetivo de este administrador dentro del evento activo. */
+  readonly myObjective = computed(() => this.activeEvent()?.myObjective ?? null);
 
   /** Si ya cumplio su objetivo. */
-  readonly iResponded = computed(() => this.activeEvent()?.iResponded ?? false);
+  readonly iCompleted = computed(() => this.activeEvent()?.iCompleted ?? false);
 
   init(): void {
     this.refresh();

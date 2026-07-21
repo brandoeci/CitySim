@@ -64,10 +64,20 @@ export class CityCanvasComponent implements AfterViewInit, OnDestroy, OnChanges 
       this.worker?.postMessage({ type: 'blocked', blocked });
     });
 
-    // La via que este administrador debe cerrar para responder al evento.
     effect(() => {
-      const target = this.eventService.myTargetEdge();
-      this.worker?.postMessage({ type: 'target', targetEdge: target });
+      const speedOverrides = this.tools.speedOverrides();
+      this.worker?.postMessage({ type: 'speedOverrides', speedOverrides });
+    });
+
+    effect(() => {
+      const shieldActiveUntil = this.tools.shieldActiveUntil();
+      this.worker?.postMessage({ type: 'shield', activeUntil: shieldActiveUntil });
+    });
+
+    // El objetivo de este administrador dentro del evento activo.
+    effect(() => {
+      const objective = this.eventService.myObjective();
+      this.worker?.postMessage({ type: 'objective', objective });
     });
   }
 
@@ -132,8 +142,21 @@ export class CityCanvasComponent implements AfterViewInit, OnDestroy, OnChanges 
   onMouseUp(e: MouseEvent): void {
     const wasDragging = this.dragging;
     this.dragging = false;
-    if (wasDragging && !this.movedWhileDown && this.tools.activeTool() === 'close-road') {
+    if (!wasDragging || this.movedWhileDown) return;
+
+    const tool = this.tools.activeTool();
+    if (tool === 'close-road') {
       this.handleRoadClick(e);
+    } else if (tool === 'force-green') {
+      this.handleForceGreenClick(e);
+    } else if (tool === 'green-wave') {
+      this.handleGreenWaveClick(e);
+    } else if (tool === 'speed-trap') {
+      this.handleSpeedToolClick(e, 'speed-trap');
+    } else if (tool === 'speed-boost') {
+      this.handleSpeedToolClick(e, 'speed-boost');
+    } else if (tool === 'traffic-bomb') {
+      this.handleTrafficBombClick(e);
     }
   }
 
@@ -143,8 +166,32 @@ export class CityCanvasComponent implements AfterViewInit, OnDestroy, OnChanges 
 
   onWheel(e: WheelEvent): void {
     e.preventDefault();
+    if (!this.mapData) return;
+
+    const canvas = this.canvasRef.nativeElement;
+    const rect = canvas.getBoundingClientRect();
+    const px = (e.clientX - rect.left) * devicePixelRatio;
+    const py = (e.clientY - rect.top) * devicePixelRatio;
+
+    // Punto del mundo bajo el cursor ANTES de cambiar el zoom.
+    const worldBefore = this.canvasToWorld(px, py);
+
     const delta = e.deltaY > 0 ? 0.9 : 1.1;
     this.scale = Math.max(0.3, Math.min(this.scale * delta, 20));
+
+    if (worldBefore) {
+      // Reajusta el pan para que ESE MISMO punto del mundo quede otra vez
+      // bajo el cursor con el nuevo zoom -- si no, el zoom queda anclado al
+      // centro del canvas y todo "se corre" respecto a donde estabas mirando.
+      const scaleX = this.canvasW / this.mapData.width;
+      const scaleY = this.canvasH / this.mapData.height;
+      const worldToCanvas = Math.min(scaleX, scaleY) * this.scale;
+      const baseOffsetX = (this.canvasW - this.mapData.width * worldToCanvas) / 2;
+      const baseOffsetY = (this.canvasH - this.mapData.height * worldToCanvas) / 2;
+      this.panX = px - worldBefore.x * worldToCanvas - baseOffsetX;
+      this.panY = py - worldBefore.y * worldToCanvas - baseOffsetY;
+    }
+
     this.sendPan();
   }
 
@@ -180,6 +227,115 @@ export class CityCanvasComponent implements AfterViewInit, OnDestroy, OnChanges 
         error: () => {}
       });
     }
+  }
+
+  private handleTrafficBombClick(e: MouseEvent): void {
+    if (!this.mapData) return;
+
+    const canvas = this.canvasRef.nativeElement;
+    const rect = canvas.getBoundingClientRect();
+
+    const px = (e.clientX - rect.left) * devicePixelRatio;
+    const py = (e.clientY - rect.top) * devicePixelRatio;
+
+    const world = this.canvasToWorld(px, py);
+    if (!world) return;
+
+    this.tools.trafficBomb(world.x, world.y).subscribe({
+      next: () => this.worker?.postMessage({ type: 'incoming', x: world.x, y: world.y }),
+      error: () => {}
+    });
+  }
+
+  private handleSpeedToolClick(e: MouseEvent, tool: 'speed-trap' | 'speed-boost'): void {
+    if (!this.mapData) return;
+
+    const canvas = this.canvasRef.nativeElement;
+    const rect = canvas.getBoundingClientRect();
+
+    const px = (e.clientX - rect.left) * devicePixelRatio;
+    const py = (e.clientY - rect.top) * devicePixelRatio;
+
+    const world = this.canvasToWorld(px, py);
+    if (!world) return;
+
+    const seg = this.findNearestSegment(world.x, world.y);
+    if (!seg) {
+      this.tools.feedback.set('No hay ninguna via ahi cerca');
+      return;
+    }
+
+    const action$ = tool === 'speed-trap' ? this.tools.speedTrap(seg.id) : this.tools.speedBoost(seg.id);
+    action$.subscribe({ next: () => {}, error: () => {} });
+  }
+
+  private handleForceGreenClick(e: MouseEvent): void {
+    const hit = this.pickIntersection(e);
+    if (!hit) return;
+    this.tools.forceGreen(hit.id, hit.horizontal).subscribe({ next: () => {}, error: () => {} });
+  }
+
+  private handleGreenWaveClick(e: MouseEvent): void {
+    const hit = this.pickIntersection(e);
+    if (!hit) return;
+    this.tools.greenWave(hit.id, hit.horizontal).subscribe({ next: () => {}, error: () => {} });
+  }
+
+  /** Cruce mas cercano al click y el eje que ese click sugiere (misma logica para forzar semaforo y ola verde). */
+  private pickIntersection(e: MouseEvent): { id: string, horizontal: boolean } | null {
+    if (!this.mapData) return null;
+
+    const canvas = this.canvasRef.nativeElement;
+    const rect = canvas.getBoundingClientRect();
+
+    const px = (e.clientX - rect.left) * devicePixelRatio;
+    const py = (e.clientY - rect.top) * devicePixelRatio;
+
+    const world = this.canvasToWorld(px, py);
+    if (!world) return null;
+
+    const node = this.findNearestIntersection(world.x, world.y);
+    if (!node) {
+      this.tools.feedback.set('No hay ningun cruce de avenidas ahi cerca');
+      return null;
+    }
+
+    // Clickear a lo largo de la via horizontal fuerza el eje horizontal, y
+    // viceversa -- sin necesitar un selector de eje aparte.
+    const dx = Math.abs(world.x - node.x);
+    const dy = Math.abs(world.y - node.y);
+    return { id: node.id, horizontal: dx > dy };
+  }
+
+  /**
+   * Cruces mayores: N_<fila>_<col> con fila y columna multiplo de 10 (mismo
+   * convenio que MapFactory). No hace falta que el backend mande los nodos:
+   * se generan los 400 candidatos localmente, igual que findNearestSegment
+   * hace con las vias.
+   */
+  private findNearestIntersection(wx: number, wy: number): { id: string, x: number, y: number } | null {
+    if (!this.mapData) return null;
+    const MAX_DIST = 6;
+    const BLOCK_SIZE = 10;
+    const maxRow = Math.floor((this.mapData.gridHeight - 1) / 10) * 10;
+    const maxCol = Math.floor((this.mapData.gridWidth - 1) / 10) * 10;
+
+    let best: { id: string, x: number, y: number } | null = null;
+    let bestDist = Infinity;
+
+    for (let row = 0; row <= maxRow; row += 10) {
+      for (let col = 0; col <= maxCol; col += 10) {
+        const x = col * BLOCK_SIZE;
+        const y = row * BLOCK_SIZE;
+        const d = Math.hypot(wx - x, wy - y);
+        if (d < bestDist) {
+          bestDist = d;
+          best = { id: `N_${row}_${col}`, x, y };
+        }
+      }
+    }
+
+    return (bestDist <= MAX_DIST) ? best : null;
   }
 
   private canvasToWorld(px: number, py: number): { x: number, y: number } | null {

@@ -1,7 +1,9 @@
-import { Component, OnInit, OnDestroy, signal } from '@angular/core';
+import { Component, OnInit, OnDestroy, signal, inject } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { FormsModule } from '@angular/forms';
 import { SimulationService } from '../../core/services/simulation.service';
+import { AuthService } from '../../core/services/auth.service';
+import { WebSocketService } from '../../core/services/websocket.service';
 import { interval, Subscription } from 'rxjs';
 
 @Component({
@@ -14,6 +16,18 @@ import { interval, Subscription } from 'rxjs';
         <span class="title">CITY SIMULATOR</span>
         <span class="subtitle">Space-Based Architecture</span>
       </div>
+
+      <div class="room-badge" *ngIf="roomCode()">
+        <span class="room-label">SALA</span>
+        <span class="room-code">{{ roomCode() }}</span>
+        <button class="copy-btn" (click)="copyRoomCode()" title="Copiar código">
+          {{ copied() ? '✓' : '⧉' }}
+        </button>
+      </div>
+
+      <button class="btn btn-outline logout-btn" (click)="logout()">
+        ⏻ CERRAR SESIÓN
+      </button>
 
       <div class="stats">
         <div class="stat">
@@ -78,6 +92,19 @@ import { interval, Subscription } from 'rxjs';
     .title { font-size: 1.1rem; font-weight: 700; letter-spacing: 3px; color: #7b9fff; }
     .subtitle { font-size: 0.65rem; letter-spacing: 2px; color: rgba(140,160,255,0.6); }
 
+    .room-badge {
+      display: flex; align-items: center; gap: 0.5rem;
+      background: rgba(26,147,111,0.15); border: 1px solid rgba(26,147,111,0.4);
+      border-radius: 6px; padding: 0.45rem 0.7rem;
+    }
+    .room-label { font-size: 0.6rem; letter-spacing: 1.5px; color: rgba(140,220,190,0.7); }
+    .room-code { font-size: 0.95rem; font-weight: 700; letter-spacing: 2px; color: #4ee0b0; flex: 1; }
+    .copy-btn {
+      background: transparent; border: 1px solid rgba(78,224,176,0.4); border-radius: 4px;
+      color: #4ee0b0; font-size: 0.75rem; width: 1.6rem; height: 1.6rem; cursor: pointer; line-height: 1;
+    }
+    .copy-btn:hover { background: rgba(78,224,176,0.1); }
+
     .stats { display: flex; gap: 1rem; }
     .stat { display: flex; flex-direction: column; align-items: center; flex: 1;
             background: rgba(255,255,255,0.04); border-radius: 6px; padding: 0.6rem 0.4rem; }
@@ -104,6 +131,8 @@ import { interval, Subscription } from 'rxjs';
     .btn-outline { background: transparent; color: #7b9fff;
                    border: 1px solid rgba(123,159,255,0.4); }
     .btn-outline:hover:not(:disabled) { background: rgba(123,159,255,0.1); }
+    .logout-btn { color: #ff7b72; border-color: rgba(193,52,42,0.4); }
+    .logout-btn:hover { background: rgba(193,52,42,0.1); }
 
     .info { font-size: 0.72rem; display: flex; flex-direction: column; gap: 4px; }
     .info-item { display: flex; gap: 0.5rem; align-items: center; }
@@ -120,10 +149,30 @@ export class ControlPanelComponent implements OnInit, OnDestroy {
   readonly fps      = signal(0);
   readonly tick     = signal(0);
   readonly lastMsg  = signal('');
+  readonly copied   = signal(false);
+
+  private auth = inject(AuthService);
+  private wsService = inject(WebSocketService);
+  readonly roomCode = this.auth.roomCode;
 
   private pollSub?: Subscription;
 
   constructor(readonly simService: SimulationService) {}
+
+  copyRoomCode(): void {
+    const code = this.roomCode();
+    if (!code) return;
+    navigator.clipboard.writeText(code).then(() => {
+      this.copied.set(true);
+      setTimeout(() => this.copied.set(false), 1500);
+    });
+  }
+
+  logout(): void {
+    this.wsService.disconnect();
+    this.auth.leaveRoom();
+    this.auth.logout();
+  }
 
   ngOnInit(): void {
     this.pollStatus();

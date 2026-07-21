@@ -6,11 +6,13 @@ import edu.escuelaing.citysim.core.map.CityMap;
 import edu.escuelaing.citysim.core.sba.SpaceDataGrid;
 import edu.escuelaing.citysim.engine.car.CarAgent;
 import edu.escuelaing.citysim.engine.config.SimulationProperties;
+import edu.escuelaing.citysim.engine.event.EventObjectiveTracker;
 import edu.escuelaing.citysim.engine.space.HazelcastSpaceDataGrid;
 import edu.escuelaing.citysim.engine.traffic.TrafficLightController;
 import jakarta.annotation.PostConstruct;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
 
 import java.util.*;
@@ -31,24 +33,42 @@ public class ZoneRegistry {
     private final CarAgent carAgent;
     private final TrafficLightController trafficController;
     private final SimulationProperties props;
+    private final EventObjectiveTracker eventTracker;
 
     private final String instanceId = UUID.randomUUID().toString();
     private final Map<String, ZoneProcessingUnit> ownedZones = new ConcurrentHashMap<>();
+    private final String prefix;
 
+    @Autowired
     public ZoneRegistry(HazelcastInstance hazelcast, SpaceDataGrid space, CityMap cityMap,
                         CarAgent carAgent, TrafficLightController trafficController,
-                        SimulationProperties props) {
+                        SimulationProperties props, EventObjectiveTracker eventTracker) {
+        this(hazelcast, space, cityMap, carAgent, trafficController, props, eventTracker, "");
+    }
+
+    /**
+     * @param prefix antepuesto al mapa crudo "zone-ownership" (p.ej. "room:ABC123:").
+     *               Necesario porque el CityMap se comparte entre salas: sin prefijo,
+     *               dos salas chocarian reclamando las mismas zonas (mismos zoneIds).
+     *               Vacio para la instancia global de siempre.
+     */
+    public ZoneRegistry(HazelcastInstance hazelcast, SpaceDataGrid space, CityMap cityMap,
+                        CarAgent carAgent, TrafficLightController trafficController,
+                        SimulationProperties props, EventObjectiveTracker eventTracker,
+                        String prefix) {
         this.hazelcast = hazelcast;
         this.space = space;
         this.cityMap = cityMap;
         this.carAgent = carAgent;
         this.trafficController = trafficController;
         this.props = props;
+        this.eventTracker = eventTracker;
+        this.prefix = prefix;
     }
 
     @PostConstruct
     public void initialize() {
-        IMap<String, String> ownershipMap = hazelcast.getMap("zone-ownership");
+        IMap<String, String> ownershipMap = hazelcast.getMap(prefix + "zone-ownership");
 
         List<String> allZoneIds = new ArrayList<>(cityMap.getZones().keySet());
         Collections.sort(allZoneIds);
@@ -95,7 +115,7 @@ public class ZoneRegistry {
     private void claimZone(String zoneId) {
         ZoneProcessingUnit zpu = new ZoneProcessingUnit(
                 zoneId, space, cityMap, carAgent, trafficController,
-                props.getMinSafeDistance()
+                props.getMinSafeDistance(), eventTracker
         );
         ownedZones.put(zoneId, zpu);
         trafficController.initializeZone(zoneId);

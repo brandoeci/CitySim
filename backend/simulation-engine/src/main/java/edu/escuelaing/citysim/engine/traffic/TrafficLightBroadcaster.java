@@ -2,6 +2,7 @@ package edu.escuelaing.citysim.engine.traffic;
 
 import edu.escuelaing.citysim.engine.simulation.SimulationClock;
 import edu.escuelaing.citysim.engine.zone.ZoneRegistry;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.messaging.simp.SimpMessagingTemplate;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
@@ -21,16 +22,28 @@ import java.util.List;
 @Component
 public class TrafficLightBroadcaster {
 
+    private static final String GLOBAL_TOPIC = "/topic/lights";
+
     private final TrafficLightController controller;
     private final SimpMessagingTemplate messaging;
     private final SimulationClock clock;
+    private final String topic;
 
+    @Autowired
     public TrafficLightBroadcaster(TrafficLightController controller,
                                    SimpMessagingTemplate messaging,
                                    SimulationClock clock) {
+        this(controller, messaging, clock, GLOBAL_TOPIC);
+    }
+
+    /** @param topic p.ej. "/topic/rooms/ABC123/lights" para una sala. */
+    public TrafficLightBroadcaster(TrafficLightController controller,
+                                   SimpMessagingTemplate messaging,
+                                   SimulationClock clock, String topic) {
         this.controller = controller;
         this.messaging = messaging;
         this.clock = clock;
+        this.topic = topic;
     }
 
     @Scheduled(fixedDelay = 1000L)
@@ -40,6 +53,6 @@ public class TrafficLightBroadcaster {
         List<TrafficLightController.LightView> lights = controller.getMajorLights();
         if (lights.isEmpty()) return;
 
-        messaging.convertAndSend("/topic/lights", lights);
+        messaging.convertAndSend(topic, lights);
     }
 }

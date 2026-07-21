@@ -21,4 +21,9 @@ public record District(
         List<String> zoneIds,
         int minCol,
         int maxCol
-) {}
+) {
+    /** La zona que identifica al distrito (la primera de su franja). */
+    public String headZone() {
+        return zoneIds.isEmpty() ? null : zoneIds.get(0);
+    }
+}

@@ -10,4 +10,5 @@ export interface TrafficLight {
   y: number;
   horizontalState: LightState;
   verticalState: LightState;
+  forced: boolean;
 }

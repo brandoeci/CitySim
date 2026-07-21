@@ -5,12 +5,14 @@ import edu.escuelaing.citysim.core.map.Edge;
 import edu.escuelaing.citysim.core.map.Node;
 import edu.escuelaing.citysim.core.model.CarState;
 import edu.escuelaing.citysim.core.model.CarStatus;
+import edu.escuelaing.citysim.core.model.SpeedOverride;
 import edu.escuelaing.citysim.core.model.TrafficLightPhase;
 import edu.escuelaing.citysim.core.pathfinding.PathFinder;
 import edu.escuelaing.citysim.core.pathfinding.PathResult;
 import org.springframework.stereotype.Component;
 
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
 
 @Component
@@ -27,16 +29,16 @@ public class CarAgent {
 
     public CarState advance(CarState car, CityMap map, CollisionAvoider avoider,
                             TrafficLightPhase trafficLight, long tick,
-                            Set<String> blocked) {
+                            Set<String> blocked, Map<String, SpeedOverride> speedOverrides) {
         if (car.getStatus() == CarStatus.ARRIVED) return null;
-        CarState updated = advanceInternal(car, map, avoider, trafficLight, tick, blocked);
+        CarState updated = advanceInternal(car, map, avoider, trafficLight, tick, blocked, speedOverrides);
         avoider.update(car, updated);
         return updated;
     }
 
     private CarState advanceInternal(CarState car, CityMap map, CollisionAvoider avoider,
                                      TrafficLightPhase trafficLight, long tick,
-                                     Set<String> blocked) {
+                                     Set<String> blocked, Map<String, SpeedOverride> speedOverrides) {
         List<String> path = car.getPathNodes();
         int idx = car.getPathIndex();
         if (path == null || idx >= path.size() - 1)
@@ -61,7 +63,9 @@ public class CarAgent {
         Node tgt = map.getNode(nextNodeId);
         double heading = Math.atan2(tgt.y() - src.y(), tgt.x() - src.x());
 
-        double advance   = edge.speedLimit() / edge.length();
+        double advance = edge.speedLimit() / edge.length();
+        SpeedOverride override = speedOverrides.get(edge.id());
+        if (override != null) advance *= override.factor();
         double newOffset = car.getSegmentOffset() + advance;
 
         // El semaforo que ve el carro depende del EJE por el que llega: los edges

@@ -4,6 +4,7 @@ import com.hazelcast.core.HazelcastInstance;
 import com.hazelcast.map.IMap;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
 
@@ -29,8 +30,14 @@ public class EventGeneratorLeader {
 
     private boolean wasLeader = false;
 
+    @Autowired
     public EventGeneratorLeader(HazelcastInstance hazelcast) {
-        this.leaderMap = hazelcast.getMap(LEADER_MAP);
+        this(hazelcast, "");
+    }
+
+    /** @param prefix antepuesto al nombre del mapa (p.ej. "room:ABC123:"), vacio para el global. */
+    public EventGeneratorLeader(HazelcastInstance hazelcast, String prefix) {
+        this.leaderMap = hazelcast.getMap(prefix + LEADER_MAP);
     }
 
     @Scheduled(fixedDelay = RENEW_EVERY)
@@ -38,14 +45,14 @@ public class EventGeneratorLeader {
         String current = leaderMap.get(LEADER_KEY);
 
         if (current == null) {
-            // Nadie es lider — intentar adquirir
+            // Nadie es lider ï¿½ intentar adquirir
             String previous = leaderMap.putIfAbsent(LEADER_KEY, instanceId, LEASE_TTL, TimeUnit.SECONDS);
             if (previous == null) {
                 log.info("Liderazgo adquirido por instancia {}", instanceId);
                 wasLeader = true;
             }
         } else if (current.equals(instanceId)) {
-            // Soy el lider — renovar TTL
+            // Soy el lider ï¿½ renovar TTL
             leaderMap.set(LEADER_KEY, instanceId, LEASE_TTL, TimeUnit.SECONDS);
             if (!wasLeader) {
                 log.info("Liderazgo renovado por instancia {}", instanceId);
@@ -54,7 +61,7 @@ public class EventGeneratorLeader {
         } else {
             // Otro es el lider
             if (wasLeader) {
-                log.info("Liderazgo perdido por instancia {} — lider actual: {}", instanceId, current);
+                log.info("Liderazgo perdido por instancia {} ï¿½ lider actual: {}", instanceId, current);
                 wasLeader = false;
             }
         }

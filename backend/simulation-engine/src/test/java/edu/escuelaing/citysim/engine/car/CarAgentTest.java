@@ -5,11 +5,13 @@ import edu.escuelaing.citysim.core.map.Edge;
 import edu.escuelaing.citysim.core.map.MapFactory;
 import edu.escuelaing.citysim.core.model.CarState;
 import edu.escuelaing.citysim.core.model.CarStatus;
+import edu.escuelaing.citysim.core.model.SpeedOverride;
 import edu.escuelaing.citysim.core.pathfinding.AStarPathFinder;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
 
 import static org.junit.jupiter.api.Assertions.*;
@@ -22,6 +24,7 @@ class CarAgentTest {
 
     /** Sin vias cerradas: el CarAgent nunca re-rutea y se prueba la circulacion normal. */
     private static final Set<String> SIN_BLOQUEOS = Set.of();
+    private static final Map<String, SpeedOverride> SIN_OVERRIDES = Map.of();
 
     @BeforeEach
     void setUp() {
@@ -39,7 +42,7 @@ class CarAgentTest {
                 .pathIndex(0)
                 .build();
 
-        CarState result = carAgent.advance(arrived, cityMap, collisionAvoider, null, 1L, SIN_BLOQUEOS);
+        CarState result = carAgent.advance(arrived, cityMap, collisionAvoider, null, 1L, SIN_BLOQUEOS, SIN_OVERRIDES);
         assertNull(result);
     }
 
@@ -52,7 +55,7 @@ class CarAgentTest {
                 .pathIndex(1)
                 .build();
 
-        CarState result = carAgent.advance(atEnd, cityMap, collisionAvoider, null, 5L, SIN_BLOQUEOS);
+        CarState result = carAgent.advance(atEnd, cityMap, collisionAvoider, null, 5L, SIN_BLOQUEOS, SIN_OVERRIDES);
         assertNotNull(result);
         assertEquals(CarStatus.ARRIVED, result.getStatus());
         assertEquals(5L, result.getLastUpdatedTick());
@@ -67,7 +70,7 @@ class CarAgentTest {
                 .pathIndex(0)
                 .build();
 
-        CarState result = carAgent.advance(noPath, cityMap, collisionAvoider, null, 1L, SIN_BLOQUEOS);
+        CarState result = carAgent.advance(noPath, cityMap, collisionAvoider, null, 1L, SIN_BLOQUEOS, SIN_OVERRIDES);
         assertNotNull(result);
         assertEquals(CarStatus.ARRIVED, result.getStatus());
     }
@@ -89,7 +92,7 @@ class CarAgentTest {
                 .lastUpdatedTick(0)
                 .build();
 
-        CarState result = carAgent.advance(moving, cityMap, collisionAvoider, null, 42L, SIN_BLOQUEOS);
+        CarState result = carAgent.advance(moving, cityMap, collisionAvoider, null, 42L, SIN_BLOQUEOS, SIN_OVERRIDES);
 
         assertNotNull(result);
         assertEquals(42L, result.getLastUpdatedTick());
@@ -111,7 +114,7 @@ class CarAgentTest {
                 .currentZoneId(edge.zoneId())
                 .build();
 
-        CarState result = carAgent.advance(moving, cityMap, collisionAvoider, null, 1L, SIN_BLOQUEOS);
+        CarState result = carAgent.advance(moving, cityMap, collisionAvoider, null, 1L, SIN_BLOQUEOS, SIN_OVERRIDES);
         assertNotNull(result);
     }
 
@@ -135,7 +138,7 @@ class CarAgentTest {
         // La via por la que iba esta cerrada: no debe seguir usandola.
         Set<String> bloqueadas = Set.of(edge.id());
 
-        CarState result = carAgent.advance(car, cityMap, collisionAvoider, null, 10L, bloqueadas);
+        CarState result = carAgent.advance(car, cityMap, collisionAvoider, null, 10L, bloqueadas, SIN_OVERRIDES);
 
         assertNotNull(result);
         assertNotEquals(edge.id(), result.getCurrentEdgeId(),

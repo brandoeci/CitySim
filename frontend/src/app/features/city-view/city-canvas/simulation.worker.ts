@@ -4,6 +4,15 @@ import { CarState, SimulationFrame } from '../../../core/models/car-state.model'
 import { CityMapData, RoadSegment } from '../../../core/models/city-map.model';
 import { District } from '../../../core/models/district.model';
 import { TrafficLight } from '../../../core/models/traffic-light.model';
+import { EventObjective } from '../../../core/models/event.model';
+
+/** Espejo del shape de ToolService.SpeedOverrideView -- se evita importar el service (Angular DI) en el worker. */
+interface SpeedOverrideView {
+  edgeId: string;
+  factor: number;
+  expiresAtTick: number;
+  placedBy: string;
+}
 
 let canvas: OffscreenCanvas | null = null;
 let ctx: OffscreenCanvasRenderingContext2D | null = null;
@@ -18,11 +27,21 @@ let viewScale = 1;
 let viewPanX = 0;
 let viewPanY = 0;
 
+/** Transform "base" (pan=0, scale=1) con la que se construye la capa estatica una sola vez. */
+let baseScale = 1;
+let baseOffsetX = 0;
+let baseOffsetY = 0;
+
 let districts: District[] = [];
 let myDistrictIndex = -1;
 let blockedEdges: Record<string, string> = {};
+let speedOverrides: Record<string, SpeedOverrideView> = {};
 let lights: TrafficLight[] = [];
-let targetEdge: string | null = null;
+let objective: EventObjective | null = null;
+let incoming: { x: number, y: number, expiresAt: number } | null = null;
+let shieldActiveUntil = 0;
+let pulseTimer: ReturnType<typeof setInterval> | null = null;
+const INCOMING_DURATION_MS = 5000;
 
 const DISTRICT_COLORS = [
   '#3d5af1', '#1a936f', '#c1342a', '#e0a80d', '#8b5cf6', '#0891b2'
@@ -62,12 +81,29 @@ addEventListener('message', ({ data }) => {
       buildStaticLayer();
       scheduleRender();
       break;
-    case 'lights':
-      lights = (data.lights ?? []) as TrafficLight[];
+    case 'speedOverrides':
+      speedOverrides = data.speedOverrides ?? {};
+      syncPulseTimer();
       scheduleRender();
       break;
-    case 'target':
-      targetEdge = data.targetEdge ?? null;
+    case 'incoming':
+      incoming = { x: data.x, y: data.y, expiresAt: Date.now() + INCOMING_DURATION_MS };
+      syncPulseTimer();
+      scheduleRender();
+      break;
+    case 'shield':
+      shieldActiveUntil = data.activeUntil ?? 0;
+      syncPulseTimer();
+      scheduleRender();
+      break;
+    case 'lights':
+      lights = (data.lights ?? []) as TrafficLight[];
+      syncPulseTimer();
+      scheduleRender();
+      break;
+    case 'objective':
+      objective = (data.objective ?? null) as EventObjective | null;
+      syncPulseTimer();
       scheduleRender();
       break;
     case 'frame':
@@ -87,11 +123,18 @@ addEventListener('message', ({ data }) => {
       scheduleRender();
       break;
     case 'pan':
+      // Mientras se arrastra/hace zoom, solo se actualiza el transform dinamico
+      // y se reposiciona la capa estatica ya construida via ctx transform (barato).
+      // Reconstruirla en cada pixel de arrastre es lo que la hacia sentir
+      // "pegada". Pero un bitmap escalado se ve borroso si el zoom se aleja
+      // mucho del que tenia al construirse -- por eso se agenda un rebuild
+      // nitido con debounce, que se dispara solo cuando el usuario deja de
+      // mover el mapa (igual que el "retile" de Google Maps/Leaflet).
       viewPanX = data.panX;
       viewPanY = data.panY;
       viewScale = data.scale;
-      buildStaticLayer();
       scheduleRender();
+      scheduleCrispRebuild();
       break;
   }
 });
@@ -120,6 +163,36 @@ function scheduleRender(): void {
   if (!animationPending) {
     animationPending = true;
     setTimeout(render, 0);
+  }
+}
+
+let crispRebuildTimer: ReturnType<typeof setTimeout> | null = null;
+
+/** Reconstruye la capa estatica nitida ~180ms despues del ultimo pan/zoom (cuando el usuario se detiene). */
+function scheduleCrispRebuild(): void {
+  if (crispRebuildTimer) clearTimeout(crispRebuildTimer);
+  crispRebuildTimer = setTimeout(() => {
+    crispRebuildTimer = null;
+    buildStaticLayer();
+    scheduleRender();
+  }, 180);
+}
+
+/**
+ * El objetivo activo parpadea, asi que hace falta repintar aunque no lleguen
+ * frames nuevos. Se hace con un setInterval independiente, NO reagendando
+ * render() desde dentro de si misma: ese patron dejo animationPending
+ * trabado en true y congelo la capa dinamica.
+ */
+function syncPulseTimer(): void {
+  const needsPulse = objective !== null || lights.some(l => l.forced)
+      || Object.keys(speedOverrides).length > 0 || incoming !== null
+      || Date.now() < shieldActiveUntil;
+  if (needsPulse && !pulseTimer) {
+    pulseTimer = setInterval(scheduleRender, 60);
+  } else if (!needsPulse && pulseTimer) {
+    clearInterval(pulseTimer);
+    pulseTimer = null;
   }
 }
 
@@ -197,7 +270,13 @@ function buildStaticLayer(): void {
   const w = canvas.width;
   const h = canvas.height;
 
+  // Se construye con el pan/zoom ACTUAL (no uno fijo): asi queda nitida en
+  // el momento de construirse. render() la reposiciona con un ctx transform
+  // barato mientras el usuario sigue moviendo el mapa (pan=0 rebuild costaria
+  // demasiado por evento); en cuanto se detiene, scheduleCrispRebuild()
+  // llama otra vez a esta funcion y "snapea" la nitidez a la posicion final.
   computeTransform(w, h);
+  baseScale = worldToCanvas; baseOffsetX = offsetX; baseOffsetY = offsetY;
 
   const offscreen = new OffscreenCanvas(w, h);
   const sCtx = offscreen.getContext('2d')!;
@@ -237,11 +316,30 @@ function buildStaticLayer(): void {
   staticLayer = offscreen.transferToImageBitmap();
 }
 
+/** El color va de verde (bien) a rojo (mal) segun que tan cerca esta del limite. */
+function urgencyColor(ratio: number): string {
+  const clamped = Math.max(0, Math.min(1, ratio));
+  if (clamped > 0.5) return '#22c55e';
+  if (clamped > 0.2) return '#eab308';
+  return '#ef4444';
+}
+
 /**
- * La via que este administrador debe cerrar para responder al evento.
- * Va en la capa dinamica porque parpadea: es lo que guia la accion del usuario.
+ * El objetivo activo del administrador. Va en la capa dinamica porque
+ * parpadea: es lo que guia la accion del usuario.
  */
-function drawTarget(c: OffscreenCanvasRenderingContext2D): void {
+function drawObjective(c: OffscreenCanvasRenderingContext2D): void {
+  if (!objective) return;
+  switch (objective.kind) {
+    case 'CLOSE_EDGE':      drawTarget(c, objective.edgeIds[0]); break;
+    case 'SHIELD_AREA':     drawArea(c, objective, objective.current / objective.threshold, false); break;
+    case 'EVACUATE_AREA':   drawArea(c, objective, 1 - objective.current / Math.max(1, objective.threshold * 2), true); break;
+    case 'CLEAR_CORRIDOR':  drawCorridor(c, objective); break;
+    case 'RELIEVE_JUNCTION': drawJunction(c, objective); break;
+  }
+}
+
+function drawTarget(c: OffscreenCanvasRenderingContext2D, targetEdge: string | undefined): void {
   if (!targetEdge) return;
   const s = findSegment(targetEdge);
   if (!s) return;
@@ -295,6 +393,258 @@ function drawTarget(c: OffscreenCanvasRenderingContext2D): void {
   c.lineCap = 'butt';
 }
 
+/** SHIELD_AREA / EVACUATE_AREA: rectangulo translucido con borde punteado. */
+function drawArea(c: OffscreenCanvasRenderingContext2D, obj: EventObjective,
+                  goodRatio: number, showCount: boolean): void {
+  if (obj.minX == null || obj.minY == null || obj.maxX == null || obj.maxY == null) return;
+
+  const pulse = 0.55 + 0.45 * Math.sin(Date.now() / 190);
+  const color = urgencyColor(goodRatio);
+
+  const x1 = worldX(obj.minX), y1 = worldY(obj.minY);
+  const x2 = worldX(obj.maxX), y2 = worldY(obj.maxY);
+  const w = x2 - x1, h = y2 - y1;
+
+  c.globalAlpha = 0.18 * pulse + 0.1;
+  c.fillStyle = color;
+  c.fillRect(x1, y1, w, h);
+
+  c.globalAlpha = 0.85;
+  c.strokeStyle = color;
+  c.lineWidth = Math.max(2, 3 * worldToCanvas);
+  c.setLineDash([Math.max(4, 6 * worldToCanvas), Math.max(3, 4 * worldToCanvas)]);
+  c.strokeRect(x1, y1, w, h);
+  c.setLineDash([]);
+
+  const label = showCount ? String(obj.current) : String(obj.current);
+  c.globalAlpha = 1.0;
+  c.fillStyle = color;
+  c.font = `700 ${Math.max(12, Math.min(w, h) * 0.3)}px monospace`;
+  c.textAlign = 'center';
+  c.textBaseline = 'middle';
+  c.fillText(label, x1 + w / 2, y1 + h / 2);
+}
+
+/** CLEAR_CORRIDOR: la cadena de tramos resaltada, verde si esta limpia, roja si hay un carro. */
+function drawCorridor(c: OffscreenCanvasRenderingContext2D, obj: EventObjective): void {
+  if (!mapData || obj.edgeIds.length === 0) return;
+
+  const color = obj.current === 0 ? '#ef4444' : '#22c55e';
+  const pulse = 0.55 + 0.45 * Math.sin(Date.now() / 190);
+
+  c.globalAlpha = 0.3 * pulse + 0.5;
+  c.strokeStyle = color;
+  c.lineWidth = Math.max(5, 7 * worldToCanvas);
+  c.lineCap = 'round';
+  c.beginPath();
+  for (const edgeId of obj.edgeIds) {
+    const s = findSegment(edgeId);
+    if (!s) continue;
+    c.moveTo(worldX(s.x1), worldY(s.y1));
+    c.lineTo(worldX(s.x2), worldY(s.y2));
+  }
+  c.stroke();
+  c.lineCap = 'butt';
+
+  const mid = findSegment(obj.edgeIds[Math.floor(obj.edgeIds.length / 2)]);
+  if (mid) {
+    const mx = worldX((mid.x1 + mid.x2) / 2);
+    const my = worldY((mid.y1 + mid.y2) / 2);
+    c.globalAlpha = 1.0;
+    c.fillStyle = color;
+    c.font = `700 ${Math.max(10, worldToCanvas * 5)}px monospace`;
+    c.textAlign = 'center';
+    c.textBaseline = 'middle';
+    c.fillText(`${obj.current}s/${obj.threshold}s`, mx, my - 10);
+  }
+  c.globalAlpha = 1.0;
+}
+
+/** Coordenadas de mundo de un nodo a partir de su id "N_<row>_<col>" (BLOCK_SIZE=10). */
+function nodeWorldPos(nodeId: string): { x: number, y: number } | null {
+  const parts = nodeId.split('_');
+  if (parts.length !== 3 || parts[0] !== 'N') return null;
+  const row = Number(parts[1]);
+  const col = Number(parts[2]);
+  if (Number.isNaN(row) || Number.isNaN(col)) return null;
+  return { x: col * 10, y: row * 10 };
+}
+
+/** RELIEVE_JUNCTION: circulo alrededor del cruce con la cifra de cola. */
+function drawJunction(c: OffscreenCanvasRenderingContext2D, obj: EventObjective): void {
+  if (!mapData || !obj.intersectionId) return;
+  const pos = nodeWorldPos(obj.intersectionId);
+  if (!pos) return;
+
+  const pulse = 0.55 + 0.45 * Math.sin(Date.now() / 190);
+  const ratio = 1 - obj.current / Math.max(1, obj.threshold);
+  const color = urgencyColor(ratio);
+
+  const cx = worldX(pos.x), cy = worldY(pos.y);
+  const r = Math.max(14, 18 * worldToCanvas);
+
+  c.globalAlpha = 0.2 * pulse + 0.15;
+  c.fillStyle = color;
+  c.beginPath();
+  c.arc(cx, cy, r, 0, Math.PI * 2);
+  c.fill();
+
+  c.globalAlpha = 0.9;
+  c.strokeStyle = color;
+  c.lineWidth = Math.max(2, 3 * worldToCanvas);
+  c.beginPath();
+  c.arc(cx, cy, r, 0, Math.PI * 2);
+  c.stroke();
+
+  c.globalAlpha = 1.0;
+  c.fillStyle = color;
+  c.font = `700 ${Math.max(11, r * 0.5)}px monospace`;
+  c.textAlign = 'center';
+  c.textBaseline = 'middle';
+  c.fillText(`${obj.current}/${obj.threshold}`, cx, cy);
+}
+
+/** REDUCTOR/TURBO activos. Va en la capa dinamica: el turbo anima flechas. */
+function drawSpeedOverrides(c: OffscreenCanvasRenderingContext2D): void {
+  if (!mapData) return;
+  const seen = new Set<string>();
+  for (const key in speedOverrides) {
+    const override = speedOverrides[key];
+    const base = override.edgeId.endsWith('_R') ? override.edgeId.slice(0, -2) : override.edgeId;
+    if (seen.has(base)) continue;
+    seen.add(base);
+
+    const s = findSegment(base);
+    if (!s) continue;
+
+    if (override.factor < 1) drawSpeedTrap(c, s);
+    else drawSpeedBoost(c, s);
+  }
+}
+
+/** REDUCTOR: franjas diagonales amarillo/negro, como una cinta de peligro sobre la via. */
+function drawSpeedTrap(c: OffscreenCanvasRenderingContext2D, s: RoadSegment): void {
+  const x1 = worldX(s.x1), y1 = worldY(s.y1);
+  const x2 = worldX(s.x2), y2 = worldY(s.y2);
+  const dx = x2 - x1, dy = y2 - y1;
+  const len = Math.hypot(dx, dy);
+  if (len < 1) return;
+
+  const ux = dx / len, uy = dy / len;
+  const px = -uy, py = ux;
+  const halfStripe = Math.max(4, 5 * worldToCanvas);
+  const step = Math.max(7, 9 * worldToCanvas);
+  const dirx = (ux + px) * Math.SQRT1_2;
+  const diry = (uy + py) * Math.SQRT1_2;
+
+  c.lineWidth = Math.max(2, 2.6 * worldToCanvas);
+  c.lineCap = 'butt';
+  let toggle = false;
+  for (let d = 0; d <= len; d += step) {
+    const cx = x1 + ux * d, cy = y1 + uy * d;
+    c.strokeStyle = toggle ? '#eab308' : '#0d0f1e';
+    toggle = !toggle;
+    c.beginPath();
+    c.moveTo(cx - dirx * halfStripe, cy - diry * halfStripe);
+    c.lineTo(cx + dirx * halfStripe, cy + diry * halfStripe);
+    c.stroke();
+  }
+}
+
+/** TURBO: brillo azul pulsante con flechas animadas en el sentido de la via. */
+function drawSpeedBoost(c: OffscreenCanvasRenderingContext2D, s: RoadSegment): void {
+  const x1 = worldX(s.x1), y1 = worldY(s.y1);
+  const x2 = worldX(s.x2), y2 = worldY(s.y2);
+  const dx = x2 - x1, dy = y2 - y1;
+  const len = Math.hypot(dx, dy);
+  if (len < 1) return;
+
+  const pulse = 0.5 + 0.5 * Math.sin(Date.now() / 190);
+
+  c.globalAlpha = 0.22 * pulse + 0.13;
+  c.strokeStyle = '#38bdf8';
+  c.lineWidth = Math.max(6, 9 * worldToCanvas);
+  c.lineCap = 'round';
+  c.beginPath();
+  c.moveTo(x1, y1); c.lineTo(x2, y2);
+  c.stroke();
+  c.lineCap = 'butt';
+  c.globalAlpha = 1.0;
+
+  const ux = dx / len, uy = dy / len;
+  const angle = Math.atan2(dy, dx);
+  const spacing = Math.max(16, 20 * worldToCanvas);
+  const speedPxPerSec = 55;
+  const offset = (Date.now() / 1000 * speedPxPerSec) % spacing;
+  const arrowSize = Math.max(3, 4 * worldToCanvas);
+
+  c.fillStyle = '#38bdf8';
+  c.globalAlpha = 0.9;
+  for (let d = offset; d < len; d += spacing) {
+    const cx = x1 + ux * d, cy = y1 + uy * d;
+    drawArrowHead(c, cx, cy, angle, arrowSize);
+  }
+  c.globalAlpha = 1.0;
+}
+
+function drawArrowHead(c: OffscreenCanvasRenderingContext2D,
+                       cx: number, cy: number, angle: number, size: number): void {
+  c.save();
+  c.translate(cx, cy);
+  c.rotate(angle);
+  c.beginPath();
+  c.moveTo(size, 0);
+  c.lineTo(-size * 0.6, size * 0.6);
+  c.lineTo(-size * 0.6, -size * 0.6);
+  c.closePath();
+  c.fill();
+  c.restore();
+}
+
+/** ESCUDO DE DISTRITO: borde dorado pulsante alrededor de mi propio distrito mientras esta activo. */
+function drawShield(c: OffscreenCanvasRenderingContext2D): void {
+  if (Date.now() >= shieldActiveUntil) return;
+  const mine = districts.find(d => d.index === myDistrictIndex);
+  if (!mine) return;
+  const b = districtBounds(mine);
+  if (!b) return;
+
+  const pulse = 0.5 + 0.5 * Math.sin(Date.now() / 190);
+  const x1 = worldX(b.x), y1 = worldY(b.y);
+  const w = b.w * worldToCanvas, h = b.h * worldToCanvas;
+
+  c.globalAlpha = 0.5 * pulse + 0.4;
+  c.strokeStyle = '#eab308';
+  c.lineWidth = Math.max(4, 7 * worldToCanvas);
+  c.strokeRect(x1, y1, w, h);
+  c.globalAlpha = 1.0;
+}
+
+/** LLUVIA DE TRAFICO: anillo rojo tipo radar en el punto elegido, 5s. */
+function drawIncoming(c: OffscreenCanvasRenderingContext2D): void {
+  if (!incoming) return;
+
+  const cx = worldX(incoming.x), cy = worldY(incoming.y);
+  const elapsed = INCOMING_DURATION_MS - (incoming.expiresAt - Date.now());
+  const ringPeriod = 900;
+  const cycle = (elapsed % ringPeriod) / ringPeriod;
+  const maxR = Math.max(20, 26 * worldToCanvas);
+
+  c.globalAlpha = Math.max(0, 1 - cycle) * 0.8;
+  c.strokeStyle = '#ef4444';
+  c.lineWidth = Math.max(2, 3 * worldToCanvas);
+  c.beginPath();
+  c.arc(cx, cy, cycle * maxR, 0, Math.PI * 2);
+  c.stroke();
+
+  c.globalAlpha = 0.9;
+  c.fillStyle = '#ef4444';
+  c.beginPath();
+  c.arc(cx, cy, Math.max(4, 5 * worldToCanvas), 0, Math.PI * 2);
+  c.fill();
+  c.globalAlpha = 1.0;
+}
+
 /**
  * Cuatro luces por cruce: dos para el eje horizontal (este y oeste) y dos para
  * el vertical (norte y sur). Los ejes estan siempre en oposicion, asi que si
@@ -313,6 +663,8 @@ function drawLights(c: OffscreenCanvasRenderingContext2D): void {
     const hColor = LIGHT_COLORS[l.horizontalState] ?? '#94a3b8';
     const vColor = LIGHT_COLORS[l.verticalState] ?? '#94a3b8';
 
+    if (l.forced) drawForcedHalo(c, cx, cy, d);
+
     // Eje horizontal: luces a izquierda y derecha del cruce
     dot(c, cx - d, cy, r, hColor);
     dot(c, cx + d, cy, r, hColor);
@@ -321,6 +673,27 @@ function drawLights(c: OffscreenCanvasRenderingContext2D): void {
     dot(c, cx, cy - d, r, vColor);
     dot(c, cx, cy + d, r, vColor);
   }
+
+  c.globalAlpha = 1.0;
+}
+
+/** FORCE_GREEN: halo verde pulsante, mas grande que las luces normales, sobre el cruce forzado. */
+function drawForcedHalo(c: OffscreenCanvasRenderingContext2D, cx: number, cy: number, d: number): void {
+  const pulse = 0.5 + 0.5 * Math.sin(Date.now() / 190);
+  const haloR = Math.max(10, d * 2.2);
+
+  c.globalAlpha = 0.18 * pulse + 0.1;
+  c.fillStyle = '#22c55e';
+  c.beginPath();
+  c.arc(cx, cy, haloR, 0, Math.PI * 2);
+  c.fill();
+
+  c.globalAlpha = 0.7 * pulse + 0.3;
+  c.strokeStyle = '#22c55e';
+  c.lineWidth = Math.max(2, 3 * worldToCanvas);
+  c.beginPath();
+  c.arc(cx, cy, haloR, 0, Math.PI * 2);
+  c.stroke();
 
   c.globalAlpha = 1.0;
 }
@@ -348,29 +721,40 @@ function render(): void {
   animationPending = false;
   if (!canvas || !ctx || !mapData) return;
 
+  if (incoming && Date.now() > incoming.expiresAt) {
+    incoming = null;
+    syncPulseTimer();
+  }
+
   const w = canvas.width;
   const h = canvas.height;
 
+  computeTransform(w, h);
+
   ctx.clearRect(0, 0, w, h);
-  if (staticLayer) {
+  if (staticLayer && baseScale > 0) {
+    // La capa estatica se construyo una sola vez con el transform base
+    // (pan=0/scale=1); aqui se reposiciona con un ctx transform barato para
+    // reflejar el pan/zoom actual, sin reconstruir el mapa completo.
+    const k = worldToCanvas / baseScale;
+    ctx.save();
+    ctx.setTransform(k, 0, 0, k, offsetX - baseOffsetX * k, offsetY - baseOffsetY * k);
     ctx.drawImage(staticLayer, 0, 0);
+    ctx.restore();
   } else {
     ctx.fillStyle = '#1a1a2e';
     ctx.fillRect(0, 0, w, h);
   }
 
-  drawTarget(ctx);
+  drawObjective(ctx);
+  drawSpeedOverrides(ctx);
+  drawIncoming(ctx);
+  drawShield(ctx);
   drawLights(ctx);
 
   const carSize = Math.max(1.5, worldToCanvas * 0.9);
   for (const car of carMap.values()) {
     drawCar(ctx, car, carSize);
-  }
-
-  // El objetivo parpadea: hay que repintar aunque no lleguen frames.
-  if (targetEdge && !animationPending) {
-    animationPending = true;
-    setTimeout(render, 60);
   }
 }
 

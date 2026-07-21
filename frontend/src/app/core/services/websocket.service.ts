@@ -1,12 +1,14 @@
-import { Injectable, OnDestroy } from '@angular/core';
+import { Injectable, OnDestroy, inject } from '@angular/core';
 import { RxStomp, RxStompConfig } from '@stomp/rx-stomp';
 import { SimulationFrame } from '../models/car-state.model';
 import { TrafficLight } from '../models/traffic-light.model';
 import { Observable, Subject } from 'rxjs';
 import { map, takeUntil } from 'rxjs/operators';
+import { AuthService } from './auth.service';
 
 @Injectable({ providedIn: 'root' })
 export class WebSocketService implements OnDestroy {
+  private auth = inject(AuthService);
   private stomp = new RxStomp();
   private destroy$ = new Subject<void>();
 
@@ -24,8 +26,14 @@ export class WebSocketService implements OnDestroy {
     this.stomp.activate();
   }
 
+  /** Con sala: /topic/rooms/{code}/<base>. Sin sala: el topic global de siempre. */
+  private topic(base: string): string {
+    const code = this.auth.roomCode();
+    return code ? `/topic/rooms/${code}/${base}` : `/topic/${base}`;
+  }
+
   frames$(): Observable<SimulationFrame> {
-    return this.stomp.watch('/topic/cars').pipe(
+    return this.stomp.watch(this.topic('cars')).pipe(
       takeUntil(this.destroy$),
       map(msg => JSON.parse(msg.body) as SimulationFrame)
     );
@@ -37,14 +45,14 @@ export class WebSocketService implements OnDestroy {
    * broadcast va igual para todos y no puede saberlo.
    */
   events$(): Observable<unknown> {
-    return this.stomp.watch('/topic/events').pipe(
+    return this.stomp.watch(this.topic('events')).pipe(
       takeUntil(this.destroy$),
       map(msg => JSON.parse(msg.body))
     );
   }
 
   lights$(): Observable<TrafficLight[]> {
-    return this.stomp.watch('/topic/lights').pipe(
+    return this.stomp.watch(this.topic('lights')).pipe(
       takeUntil(this.destroy$),
       map(msg => JSON.parse(msg.body) as TrafficLight[])
     );

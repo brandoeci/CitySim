@@ -59,11 +59,36 @@ public class CarSpawner {
         return spawned;
     }
 
+    /**
+     * LLUVIA DE TRAFICO: origen aleatorio, destino fijo cerca del punto que
+     * eligio el administrador. A diferencia de spawn(), no respeta el limite
+     * global de carros de forma perezosa -- igual se limita a props.getMaxCars()
+     * para no saturar el cluster si ya esta casi lleno.
+     */
+    public int spawnTargeted(int count, String targetNodeId) {
+        long current = space.getCarCount();
+        int toSpawn = (int) Math.min(count, props.getMaxCars() - current);
+        if (toSpawn <= 0) { log.warn("Car limit {} reached", props.getMaxCars()); return 0; }
+        int spawned = 0;
+        for (int i = 0; i < toSpawn; i++) if (spawnOneTargeted(targetNodeId)) spawned++;
+        log.info("Spawned {} cars hacia {} (total: {})", spawned, targetNodeId, space.getCarCount());
+        return spawned;
+    }
+
     private boolean spawnOne() {
         String originId = randomNodeId();
         String destId   = randomNodeId();
         for (int i = 0; i < 10 && originId.equals(destId); i++) destId = randomNodeId();
+        return spawnCar(originId, destId);
+    }
 
+    private boolean spawnOneTargeted(String destId) {
+        String originId = randomNodeId();
+        for (int i = 0; i < 10 && originId.equals(destId); i++) originId = randomNodeId();
+        return spawnCar(originId, destId);
+    }
+
+    private boolean spawnCar(String originId, String destId) {
         PathResult path = pathFinder.findPath(cityMap, originId, destId);
         if (!path.isFound()) return false;
 

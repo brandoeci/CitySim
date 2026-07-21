@@ -2,8 +2,11 @@ package edu.escuelaing.citysim.engine.web;
 
 import edu.escuelaing.citysim.core.model.CarState;
 import edu.escuelaing.citysim.core.sba.SpaceDataGrid;
+import edu.escuelaing.citysim.engine.auth.JwtService;
 import edu.escuelaing.citysim.engine.car.CarSpawner;
 import edu.escuelaing.citysim.engine.car.PopulationMaintainer;
+import edu.escuelaing.citysim.engine.room.RoomManager;
+import edu.escuelaing.citysim.engine.room.RoomSimulation;
 import edu.escuelaing.citysim.engine.simulation.SimulationClock;
 import edu.escuelaing.citysim.engine.simulation.SimulationOrchestrator;
 import edu.escuelaing.citysim.engine.zone.ZoneRegistry;
@@ -23,34 +26,41 @@ public class SimulationRestController {
     private final ZoneRegistry zoneRegistry;
     private final SimulationOrchestrator orchestrator;
     private final PopulationMaintainer population;
+    private final RoomManager roomManager;
+    private final JwtService jwtService;
 
     public SimulationRestController(SimulationClock clock, CarSpawner spawner,
                                     SpaceDataGrid space, ZoneRegistry zoneRegistry,
                                     SimulationOrchestrator orchestrator,
-                                    PopulationMaintainer population) {
+                                    PopulationMaintainer population,
+                                    RoomManager roomManager, JwtService jwtService) {
         this.clock = clock;
         this.spawner = spawner;
         this.space = space;
         this.zoneRegistry = zoneRegistry;
         this.orchestrator = orchestrator;
         this.population = population;
+        this.roomManager = roomManager;
+        this.jwtService = jwtService;
     }
 
     @PostMapping("/start")
-    public ResponseEntity<Map<String, Object>> start() {
-        clock.start();
+    public ResponseEntity<Map<String, Object>> start(@RequestHeader("Authorization") String authHeader) {
+        SimulationClock myClock = clockFor(authHeader);
+        myClock.start();
         return ResponseEntity.ok(Map.of(
                 "status", "started",
-                "tick", clock.getTickNumber()
+                "tick", myClock.getTickNumber()
         ));
     }
 
     @PostMapping("/stop")
-    public ResponseEntity<Map<String, Object>> stop() {
-        clock.stop();
+    public ResponseEntity<Map<String, Object>> stop(@RequestHeader("Authorization") String authHeader) {
+        SimulationClock myClock = clockFor(authHeader);
+        myClock.stop();
         return ResponseEntity.ok(Map.of(
                 "status", "stopped",
-                "tick", clock.getTickNumber()
+                "tick", myClock.getTickNumber()
         ));
     }
 
@@ -63,30 +73,41 @@ public class SimulationRestController {
      * sin intervencion manual.
      */
     @PostMapping("/cars")
-    public ResponseEntity<Map<String, Object>> setPopulation(@RequestBody Map<String, Integer> body) {
+    public ResponseEntity<Map<String, Object>> setPopulation(
+            @RequestHeader("Authorization") String authHeader,
+            @RequestBody Map<String, Integer> body) {
+        RoomSimulation room = resolveRoom(authHeader);
+        SpaceDataGrid mySpace = room != null ? room.getSpace() : space;
+        PopulationMaintainer myPopulation = room != null ? room.getPopulationMaintainer() : population;
+        CarSpawner mySpawner = room != null ? room.getCarSpawner() : spawner;
+
         Integer target = body.get("target");
         if (target == null) target = body.get("count"); // compatibilidad
         if (target == null) target = 300;
 
-        population.setTargetCars(target);
+        myPopulation.setTargetCars(target);
 
         // Arranque inmediato: no esperamos al ciclo del mantenedor.
-        long current = space.getCarCount();
+        long current = mySpace.getCarCount();
         int spawned = 0;
         if (current < target) {
-            spawned = spawner.spawn((int) Math.min(target - current, 100));
+            spawned = mySpawner.spawn((int) Math.min(target - current, 100));
         }
 
         Map<String, Object> body2 = new LinkedHashMap<>();
         body2.put("target", target);
         body2.put("spawned", spawned);
-        body2.put("total", space.getCarCount());
+        body2.put("total", mySpace.getCarCount());
         return ResponseEntity.ok(body2);
     }
 
     @DeleteMapping("/cars/{carId}")
-    public ResponseEntity<Void> removeCar(@PathVariable String carId) {
-        space.removeCar(carId);
+    public ResponseEntity<Void> removeCar(
+            @RequestHeader("Authorization") String authHeader,
+            @PathVariable String carId) {
+        RoomSimulation room = resolveRoom(authHeader);
+        SpaceDataGrid mySpace = room != null ? room.getSpace() : space;
+        mySpace.removeCar(carId);
         return ResponseEntity.noContent().build();
     }
 
@@ -95,24 +116,57 @@ public class SimulationRestController {
      * repondria los carros de inmediato.
      */
     @DeleteMapping("/cars")
-    public ResponseEntity<Map<String, Object>> removeAllCars() {
-        population.setTargetCars(0);
-        Map<String, CarState> all = space.getAllCars();
-        all.keySet().forEach(space::removeCar);
+    public ResponseEntity<Map<String, Object>> removeAllCars(@RequestHeader("Authorization") String authHeader) {
+        RoomSimulation room = resolveRoom(authHeader);
+        SpaceDataGrid mySpace = room != null ? room.getSpace() : space;
+        PopulationMaintainer myPopulation = room != null ? room.getPopulationMaintainer() : population;
+
+        myPopulation.setTargetCars(0);
+        Map<String, CarState> all = mySpace.getAllCars();
+        all.keySet().forEach(mySpace::removeCar);
         return ResponseEntity.ok(Map.of("removed", all.size(), "target", 0));
     }
 
     @GetMapping("/status")
-    public ResponseEntity<Map<String, Object>> status() {
+    public ResponseEntity<Map<String, Object>> status(@RequestHeader("Authorization") String authHeader) {
+        RoomSimulation room = resolveRoom(authHeader);
+        SimulationClock myClock = room != null ? room.getClock() : clock;
+        SpaceDataGrid mySpace = room != null ? room.getSpace() : space;
+        ZoneRegistry myZoneRegistry = room != null ? room.getZoneRegistry() : zoneRegistry;
+        SimulationOrchestrator myOrchestrator = room != null ? room.getOrchestrator() : orchestrator;
+        PopulationMaintainer myPopulation = room != null ? room.getPopulationMaintainer() : population;
+
         Map<String, Object> body = new LinkedHashMap<>();
-        body.put("running", clock.isRunning());
-        body.put("tick", clock.getTickNumber());
-        body.put("totalCars", space.getCarCount());
-        body.put("targetCars", population.getTargetCars());
-        body.put("fps", orchestrator.getCurrentFps());
-        body.put("ownedZones", zoneRegistry.getOwnedZones().size());
-        body.put("localCars", zoneRegistry.getTotalLocalCars());
-        body.put("instanceId", zoneRegistry.getInstanceId());
+        body.put("running", myClock.isRunning());
+        body.put("tick", myClock.getTickNumber());
+        body.put("totalCars", mySpace.getCarCount());
+        body.put("targetCars", myPopulation.getTargetCars());
+        body.put("fps", myOrchestrator.getCurrentFps());
+        body.put("ownedZones", myZoneRegistry.getOwnedZones().size());
+        body.put("localCars", myZoneRegistry.getTotalLocalCars());
+        body.put("instanceId", myZoneRegistry.getInstanceId());
         return ResponseEntity.ok(body);
+    }
+
+    private SimulationClock clockFor(String authHeader) {
+        RoomSimulation room = resolveRoom(authHeader);
+        return room != null ? room.getClock() : clock;
+    }
+
+    /**
+     * Si el token trae roomCode, RESUCITA esa sala si no estaba corriendo
+     * (idempotente) en vez de solo consultarla -- a diferencia del patron
+     * resolveRoom() de solo-lectura que usan los demas controllers. Aqui hace
+     * falta: si el usuario ya esta viendo la ciudad de su sala (el frontend
+     * asumio que existe porque su JWT trae el roomCode), esta llamada debe
+     * garantizar que esa sala este viva, no reportar silenciosamente el
+     * estado de la simulacion global.
+     */
+    private RoomSimulation resolveRoom(String authHeader) {
+        if (authHeader == null || !authHeader.startsWith("Bearer ")) return null;
+        String token = authHeader.substring(7).trim();
+        if (!jwtService.isValid(token)) return null;
+        String roomCode = jwtService.extractRoomCode(token);
+        return roomCode != null ? roomManager.startRoom(roomCode) : null;
     }
 }

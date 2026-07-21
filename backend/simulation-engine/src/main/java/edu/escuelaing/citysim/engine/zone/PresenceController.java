@@ -2,6 +2,8 @@ package edu.escuelaing.citysim.engine.zone;
 
 import edu.escuelaing.citysim.core.sba.SpaceDataGrid;
 import edu.escuelaing.citysim.engine.auth.JwtService;
+import edu.escuelaing.citysim.engine.room.RoomManager;
+import edu.escuelaing.citysim.engine.room.RoomSimulation;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
@@ -16,12 +18,14 @@ public class PresenceController {
     private final SpaceDataGrid space;
     private final DistrictService districtService;
     private final JwtService jwtService;
+    private final RoomManager roomManager;
 
     public PresenceController(SpaceDataGrid space, DistrictService districtService,
-                              JwtService jwtService) {
+                              JwtService jwtService, RoomManager roomManager) {
         this.space = space;
         this.districtService = districtService;
         this.jwtService = jwtService;
+        this.roomManager = roomManager;
     }
 
     @PostMapping("/presence/ping")
@@ -34,9 +38,13 @@ public class PresenceController {
                     .body(Map.of("error", "Token invalido"));
         }
 
-        space.heartbeat(username);
+        RoomSimulation room = resolveRoom(authHeader);
+        SpaceDataGrid mySpace = room != null ? room.getSpace() : space;
+        DistrictService myDistricts = room != null ? room.getDistrictService() : districtService;
 
-        return ResponseEntity.ok(buildState(username));
+        mySpace.heartbeat(username);
+
+        return ResponseEntity.ok(buildState(username, mySpace, myDistricts));
     }
 
     @GetMapping("/zones/districts")
@@ -44,7 +52,10 @@ public class PresenceController {
             @RequestHeader("Authorization") String authHeader) {
 
         String username = extractUsername(authHeader);
-        return ResponseEntity.ok(buildState(username));
+        RoomSimulation room = resolveRoom(authHeader);
+        SpaceDataGrid mySpace = room != null ? room.getSpace() : space;
+        DistrictService myDistricts = room != null ? room.getDistrictService() : districtService;
+        return ResponseEntity.ok(buildState(username, mySpace, myDistricts));
     }
 
     @PostMapping("/presence/leave")
@@ -53,13 +64,15 @@ public class PresenceController {
 
         String username = extractUsername(authHeader);
         if (username != null) {
-            space.removePresence(username);
+            RoomSimulation room = resolveRoom(authHeader);
+            SpaceDataGrid mySpace = room != null ? room.getSpace() : space;
+            mySpace.removePresence(username);
         }
         return ResponseEntity.ok(Map.of("left", true));
     }
 
-    private Map<String, Object> buildState(String username) {
-        List<District> districts = districtService.getDistricts();
+    private Map<String, Object> buildState(String username, SpaceDataGrid mySpace, DistrictService myDistricts) {
+        List<District> districts = myDistricts.getDistricts();
 
         District mine = districts.stream()
                 .filter(d -> d.username().equals(username))
@@ -79,5 +92,20 @@ public class PresenceController {
         String token = authHeader.substring(7).trim();
         if (!jwtService.isValid(token)) return null;
         return jwtService.extractUsername(token);
+    }
+
+    /**
+     * Si el token trae roomCode, RESUCITA esa sala si no estaba corriendo
+     * (idempotente); si no trae roomCode, modo global de siempre. Antes usaba
+     * getRoom() de solo lectura: si el backend se reiniciaba mientras un
+     * usuario tenia una sala abierta, su JWT seguia siendo valido pero la
+     * sala nunca volvia a levantarse, y esto caia en silencio al modo global.
+     */
+    private RoomSimulation resolveRoom(String authHeader) {
+        if (authHeader == null || !authHeader.startsWith("Bearer ")) return null;
+        String token = authHeader.substring(7).trim();
+        if (!jwtService.isValid(token)) return null;
+        String roomCode = jwtService.extractRoomCode(token);
+        return roomCode != null ? roomManager.startRoom(roomCode) : null;
     }
 }

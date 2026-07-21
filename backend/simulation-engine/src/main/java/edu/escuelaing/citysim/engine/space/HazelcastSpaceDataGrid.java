@@ -6,8 +6,10 @@ import com.hazelcast.topic.ITopic;
 import edu.escuelaing.citysim.core.model.CarState;
 import edu.escuelaing.citysim.core.model.EventState;
 import edu.escuelaing.citysim.core.model.SimulationFrame;
+import edu.escuelaing.citysim.core.model.SpeedOverride;
 import edu.escuelaing.citysim.core.model.TrafficLightPhase;
 import edu.escuelaing.citysim.core.sba.SpaceDataGrid;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
 
 import java.util.Collection;
@@ -33,17 +35,29 @@ public class HazelcastSpaceDataGrid implements SpaceDataGrid {
     private final IMap<String, String> zoneAssignmentMap;
     private final IMap<String, Long> activeUserMap;
     private final IMap<String, String> blockedEdgeMap;
+    private final IMap<String, SpeedOverride> speedOverrideMap;
     private final ITopic<SimulationFrame> frameTopic;
 
+    @Autowired
     public HazelcastSpaceDataGrid(HazelcastInstance hazelcast) {
-        this.carMap            = hazelcast.getMap("cars");
-        this.trafficLightMap   = hazelcast.getMap("traffic-lights");
-        this.simulationStateMap = hazelcast.getMap("simulation-state");
-        this.activeEventMap    = hazelcast.getMap("active-events");
-        this.zoneAssignmentMap = hazelcast.getMap("zone-assignments");
-        this.activeUserMap     = hazelcast.getMap("active-users");
-        this.blockedEdgeMap    = hazelcast.getMap("blocked-edges");
-        this.frameTopic        = hazelcast.getTopic("sim-frames");
+        this(hazelcast, "");
+    }
+
+    /**
+     * @param prefix antepuesto a todos los nombres de map/topic (p.ej.
+     *               "room:ABC123:"), para aislar el estado de una sala. Vacio
+     *               para la instancia global de siempre.
+     */
+    public HazelcastSpaceDataGrid(HazelcastInstance hazelcast, String prefix) {
+        this.carMap            = hazelcast.getMap(prefix + "cars");
+        this.trafficLightMap   = hazelcast.getMap(prefix + "traffic-lights");
+        this.simulationStateMap = hazelcast.getMap(prefix + "simulation-state");
+        this.activeEventMap    = hazelcast.getMap(prefix + "active-events");
+        this.zoneAssignmentMap = hazelcast.getMap(prefix + "zone-assignments");
+        this.activeUserMap     = hazelcast.getMap(prefix + "active-users");
+        this.blockedEdgeMap    = hazelcast.getMap(prefix + "blocked-edges");
+        this.speedOverrideMap  = hazelcast.getMap(prefix + "speed-overrides");
+        this.frameTopic        = hazelcast.getTopic(prefix + "sim-frames");
     }
 
     // Cars
@@ -185,6 +199,29 @@ public class HazelcastSpaceDataGrid implements SpaceDataGrid {
         Map<String, String> snapshot = new HashMap<>();
         blockedEdgeMap.forEach(snapshot::put);
         return snapshot;
+    }
+
+    // Multiplicadores de velocidad temporales (REDUCTOR / TURBO)
+    @Override
+    public void putSpeedOverride(SpeedOverride override) {
+        speedOverrideMap.set(override.edgeId(), override);
+    }
+
+    @Override
+    public SpeedOverride getSpeedOverride(String edgeId) {
+        return speedOverrideMap.get(edgeId);
+    }
+
+    @Override
+    public Map<String, SpeedOverride> getSpeedOverrides() {
+        Map<String, SpeedOverride> snapshot = new HashMap<>();
+        speedOverrideMap.forEach(snapshot::put);
+        return snapshot;
+    }
+
+    @Override
+    public void removeSpeedOverride(String edgeId) {
+        speedOverrideMap.delete(edgeId);
     }
 
     // Acceso directo para listeners

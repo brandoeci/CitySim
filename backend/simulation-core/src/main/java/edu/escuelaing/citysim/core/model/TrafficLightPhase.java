@@ -32,6 +32,9 @@ public class TrafficLightPhase implements Serializable {
     private int yellowDuration;
     private int redDuration;
 
+    /** Ticks restantes de forzado (FORCE_GREEN). 0 = ciclo normal. */
+    private int forcedTicksRemaining;
+
     public TrafficLightPhase() {}
 
     private TrafficLightPhase(Builder b) {
@@ -42,6 +45,7 @@ public class TrafficLightPhase implements Serializable {
         this.greenDuration = b.greenDuration;
         this.yellowDuration = b.yellowDuration;
         this.redDuration = b.redDuration;
+        this.forcedTicksRemaining = b.forcedTicksRemaining;
     }
 
     public String getIntersectionId()    { return intersectionId; }
@@ -51,6 +55,8 @@ public class TrafficLightPhase implements Serializable {
     public int getGreenDuration()        { return greenDuration; }
     public int getYellowDuration()       { return yellowDuration; }
     public int getRedDuration()          { return redDuration; }
+    public int getForcedTicksRemaining() { return forcedTicksRemaining; }
+    public boolean isForced()            { return forcedTicksRemaining > 0; }
 
     public void setIntersectionId(String v)    { intersectionId = v; }
     public void setState(TrafficLightState v)  { state = v; }
@@ -59,6 +65,7 @@ public class TrafficLightPhase implements Serializable {
     public void setGreenDuration(int v)        { greenDuration = v; }
     public void setYellowDuration(int v)       { yellowDuration = v; }
     public void setRedDuration(int v)          { redDuration = v; }
+    public void setForcedTicksRemaining(int v) { forcedTicksRemaining = v; }
 
     /** Color que ve un carro que llega por el eje indicado. */
     public TrafficLightState stateFor(boolean horizontal) {
@@ -78,9 +85,29 @@ public class TrafficLightPhase implements Serializable {
     public boolean isRed()   { return state == TrafficLightState.RED || state == TrafficLightState.YELLOW; }
 
     /**
+     * Fuerza el eje indicado a verde durante durationTicks. Mientras dura el
+     * forzado, advance() no avanza el ciclo normal; al expirar cae solo,
+     * limpio, en GREEN/ticksInCurrentState=0 del eje forzado.
+     */
+    public TrafficLightPhase forceGreen(boolean horizontal, int durationTicks) {
+        return new Builder(this)
+                .state(TrafficLightState.GREEN)
+                .verticalTurn(!horizontal)
+                .ticksInCurrentState(0)
+                .forcedTicksRemaining(durationTicks)
+                .build();
+    }
+
+    /**
      * Avanza el ciclo. Al terminar el amarillo, el paso cambia de eje.
      */
     public TrafficLightPhase advance() {
+        if (forcedTicksRemaining > 0) {
+            return new Builder(this)
+                    .forcedTicksRemaining(forcedTicksRemaining - 1)
+                    .build();
+        }
+
         int nextTicks = ticksInCurrentState + 1;
         TrafficLightState nextState = state;
         boolean nextVertical = verticalTurn;
@@ -126,6 +153,7 @@ public class TrafficLightPhase implements Serializable {
         private int greenDuration  = 60;
         private int yellowDuration = 8;
         private int redDuration    = 60;
+        private int forcedTicksRemaining = 0;
 
         public Builder() {}
 
@@ -137,6 +165,7 @@ public class TrafficLightPhase implements Serializable {
             this.greenDuration = p.greenDuration;
             this.yellowDuration = p.yellowDuration;
             this.redDuration = p.redDuration;
+            this.forcedTicksRemaining = p.forcedTicksRemaining;
         }
 
         public Builder intersectionId(String v)       { intersectionId = v; return this; }
@@ -146,6 +175,7 @@ public class TrafficLightPhase implements Serializable {
         public Builder greenDuration(int v)           { greenDuration = v; return this; }
         public Builder yellowDuration(int v)          { yellowDuration = v; return this; }
         public Builder redDuration(int v)             { redDuration = v; return this; }
+        public Builder forcedTicksRemaining(int v)    { forcedTicksRemaining = v; return this; }
 
         public TrafficLightPhase build() { return new TrafficLightPhase(this); }
     }

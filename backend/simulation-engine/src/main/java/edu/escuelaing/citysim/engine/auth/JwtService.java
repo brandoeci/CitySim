@@ -18,17 +18,29 @@ public class JwtService {
     private static final long EXPIRATION_MS = 86400000L;
 
     public String generate(String username) {
+        return generate(username, null);
+    }
+
+    /** Reemite el token con el claim "room" cuando el usuario se une a una sala. */
+    public String generate(String username, String roomCode) {
         SecretKey key = Keys.hmacShaKeyFor(secret.getBytes(StandardCharsets.UTF_8));
-        return Jwts.builder()
+        JwtBuilder builder = Jwts.builder()
                 .subject(username)
                 .issuedAt(new Date())
-                .expiration(new Date(System.currentTimeMillis() + EXPIRATION_MS))
-                .signWith(key)
-                .compact();
+                .expiration(new Date(System.currentTimeMillis() + EXPIRATION_MS));
+        if (roomCode != null) {
+            builder.claim("room", roomCode);
+        }
+        return builder.signWith(key).compact();
     }
 
     public String extractUsername(String token) {
         return parseClaims(token).getSubject();
+    }
+
+    /** La sala a la que se unio el usuario, o null si el token no la lleva. */
+    public String extractRoomCode(String token) {
+        return parseClaims(token).get("room", String.class);
     }
 
     public boolean isValid(String token) {

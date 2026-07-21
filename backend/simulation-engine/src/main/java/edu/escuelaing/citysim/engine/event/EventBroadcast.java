@@ -1,7 +1,8 @@
 package edu.escuelaing.citysim.engine.event;
 
+import edu.escuelaing.citysim.core.model.EventObjective;
+
 import java.util.Map;
-import java.util.Set;
 
 public record EventBroadcast(
         Long eventId,
@@ -14,6 +15,5 @@ public record EventBroadcast(
         int totalActions,
         int progressPercent,
         String startedAt,
-        Map<String, String> targetEdges,
-        Set<String> respondedBy
+        Map<String, EventObjective> objectives
 ) {}

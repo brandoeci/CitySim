@@ -13,10 +13,17 @@ public class SimulationEvent {
     @GeneratedValue(strategy = GenerationType.IDENTITY)
     private Long id;
 
+    // columnDefinition explicito: sin el, Hibernate 6 genera un CHECK
+    // constraint atado al set de valores del enum en el momento de crear la
+    // tabla, y ddl-auto=update nunca lo actualiza cuando el enum gana
+    // valores nuevos (paso exactamente eso al agregar AREA_SHIELD/EVACUATION/
+    // GRIDLOCK y FAILED). Con varchar plano no hay constraint que journalear.
     @Enumerated(EnumType.STRING)
+    @Column(columnDefinition = "varchar(30)")
     private EventType type;
 
     @Enumerated(EnumType.STRING)
+    @Column(columnDefinition = "varchar(20)")
     private EventStatus status;
 
     private String affectedZoneId;

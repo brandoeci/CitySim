@@ -3,6 +3,7 @@ package edu.escuelaing.citysim.core.sba;
 import edu.escuelaing.citysim.core.model.CarState;
 import edu.escuelaing.citysim.core.model.EventState;
 import edu.escuelaing.citysim.core.model.SimulationFrame;
+import edu.escuelaing.citysim.core.model.SpeedOverride;
 import edu.escuelaing.citysim.core.model.TrafficLightPhase;
 
 import java.util.Collection;
@@ -56,4 +57,10 @@ public interface SpaceDataGrid {
     boolean isEdgeBlocked(String edgeId);
     Set<String> getBlockedEdges();
     Map<String, String> getBlockedEdgesWithOwner();
+
+    // Multiplicadores de velocidad temporales (REDUCTOR / TURBO).
+    void putSpeedOverride(SpeedOverride override);
+    SpeedOverride getSpeedOverride(String edgeId);
+    Map<String, SpeedOverride> getSpeedOverrides();
+    void removeSpeedOverride(String edgeId);
 }
